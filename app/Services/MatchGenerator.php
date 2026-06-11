@@ -29,11 +29,11 @@ class MatchGenerator
         $matches = [];
 
         if ($competitionType === 'tournament') {
-            // Tournament mode now generates group stage matches only.
-            // Knockout placeholders are created later once the group stage is complete.
+            // Mode turnamen = babak gugur murni tanpa fase grup.
+            // Bracket dibangun langsung dari tim yang lolos verifikasi.
             $matches = array_merge(
                 $matches,
-                $this->buildTournamentStageMatches($tournament, $bracketValue)
+                $this->buildKnockoutMatchesFromTeams($tournament, $bracketSetting)
             );
         } elseif ($competitionType === 'league') {
             $matches = array_merge(
@@ -95,9 +95,47 @@ class MatchGenerator
         return 'tournament_' . $tournament->id . '_bracket_settings';
     }
 
-    private function buildTournamentStageMatches(Tournament $tournament, array $bracketValue): array
+    /**
+     * Bangun pertandingan knockout langsung dari tim yang lolos verifikasi
+     * (mode turnamen tanpa fase grup). Struktur bracket juga disinkronkan ke
+     * pengaturan bracket agar halaman Pengaturan Slot Bracket dan Bracket
+     * Gugur menampilkan bagan yang sama.
+     */
+    private function buildKnockoutMatchesFromTeams(Tournament $tournament, AppSetting $bracketSetting): array
     {
-        return $this->buildGroupStageMatches($tournament);
+        $bracketValue = $bracketSetting->value ?? [];
+        $teams = $this->approvedTeamDescriptors($tournament);
+
+        $structure = count($teams) >= 2
+            ? $this->buildBracketStructure(
+                array_column($teams, 'key'),
+                (bool) ($bracketValue['third_place'] ?? false)
+            )
+            : [];
+
+        if (($bracketValue['matches'] ?? []) !== $structure) {
+            $bracketValue['matches'] = $structure;
+            $bracketSetting->update(['value' => $bracketValue]);
+        }
+
+        if (empty($structure)) {
+            return [];
+        }
+
+        $rows = $this->buildBracketMatchesFromArray($tournament, $structure, 'knockout', null);
+
+        $teamIdByName = [];
+        foreach ($teams as $team) {
+            $teamIdByName[$team['key']] = $team['id'];
+        }
+
+        foreach ($rows as &$row) {
+            $row['home_team_id'] = $teamIdByName[$row['home_team_key']] ?? null;
+            $row['away_team_id'] = $teamIdByName[$row['away_team_key']] ?? null;
+        }
+        unset($row);
+
+        return $rows;
     }
 
     public function generateBracketStructureForTournament(Tournament $tournament): void
@@ -137,11 +175,15 @@ class MatchGenerator
         });
     }
 
-    private function buildLeagueStageMatches(Tournament $tournament): array
+    /**
+     * Daftar tim yang lolos verifikasi, diurutkan berdasarkan seed.
+     */
+    private function approvedTeamDescriptors(Tournament $tournament): array
     {
         $tournament->load(['tournamentTeams.team']);
 
-        $teamDescriptors = $tournament->tournamentTeams
+        return $tournament->tournamentTeams
+            ->filter(fn ($team) => ($team->team?->verification_status ?? 'pending') === 'approved')
             ->sortBy(fn ($team) => $team->seed ?? 0)
             ->map(function ($tournamentTeam) {
                 return [
@@ -151,6 +193,11 @@ class MatchGenerator
             })
             ->values()
             ->all();
+    }
+
+    private function buildLeagueStageMatches(Tournament $tournament): array
+    {
+        $teamDescriptors = $this->approvedTeamDescriptors($tournament);
 
         if (count($teamDescriptors) < 2) {
             return [];
@@ -196,74 +243,6 @@ class MatchGenerator
         return $matches;
     }
 
-    private function buildGroupStageMatches(Tournament $tournament): array
-    {
-        $groupSetting = $tournament->groupSetting;
-        $groupCount = $groupSetting->group_count;
-        $groupLabels = $this->buildGroupLabels($groupCount);
-
-        // Ensure teams are loaded so we can log and operate on fresh data
-        $tournament->load(['tournamentTeams.team']);
-
-        // Log incoming tournamentTeams (id, seed, group_label)
-        $teamsForLog = $tournament->tournamentTeams->map(function ($t) {
-            return [
-                'id' => $t->id,
-                'seed' => $t->seed,
-                'group_label' => $t->group_label,
-            ];
-        })->values()->all();
-
-        Log::info('buildGroupStageMatches: tournamentTeams loaded', [
-            'tournament_id' => $tournament->id,
-            'teams' => $teamsForLog,
-        ]);
-
-        $teamsByGroupCollection = $tournament->tournamentTeams
-            ->filter(fn ($team) => ! empty($team->group_label))
-            ->groupBy('group_label')
-            ->mapWithKeys(function ($teams, $groupLabel) {
-                $sortedTeams = $teams->sortBy(fn ($team) => $team->seed ?? 0);
-
-                return [$groupLabel => $sortedTeams->map(function ($tournamentTeam) {
-                    return [
-                        'id' => $tournamentTeam->id,
-                        'key' => $tournamentTeam->team?->name ?? 'TBD',
-                    ];
-                })->values()->all()];
-            });
-
-        // Log counts per group after grouping
-        $groupCounts = $teamsByGroupCollection->map(fn ($teams) => count($teams))->toArray();
-        Log::info('buildGroupStageMatches: teams grouped', [
-            'tournament_id' => $tournament->id,
-            'group_counts' => $groupCounts,
-        ]);
-
-        $teamsByGroup = $teamsByGroupCollection->toArray();
-
-        $rows = [];
-
-        foreach ($groupLabels as $groupLabel) {
-            $teamDescriptors = $teamsByGroup[$groupLabel] ?? [];
-            if (count($teamDescriptors) < 2) {
-                continue;
-            }
-
-            $groupMatches = $this->buildRoundRobinMatchRows(
-                $tournament,
-                $teamDescriptors,
-                'group',
-                strtoupper($groupLabel),
-                'Matchday'
-            );
-
-            $rows = array_merge($rows, $groupMatches);
-        }
-
-        return $rows;
-    }
-
     private function buildBracketMatchesFromArray(Tournament $tournament, array $bracketMatches, string $stageType, ?string $playoffType, array $extra = []): array
     {
         $rows = [];
@@ -278,6 +257,8 @@ class MatchGenerator
                 'playoff_type' => $playoffType,
                 'group_label' => null,
                 'round_name' => $match['round'] ?? 'Bracket',
+                'home_team_id' => null,
+                'away_team_id' => null,
                 'home_team_key' => $match['left'] ?? null,
                 'away_team_key' => $match['right'] ?? null,
                 'source_home' => $match['left'] ?? null,
@@ -373,6 +354,211 @@ class MatchGenerator
         return $rounds;
     }
 
+    /**
+     * Bangun struktur bracket gugur dari daftar posisi/nama tim ($positions),
+     * memakai seeding bracket standar. Posisi bisa berupa placeholder ("A1")
+     * maupun nama tim asli (mode turnamen tanpa grup).
+     */
+    public function buildBracketStructure(array $positions, bool $includeThirdPlace = false): array
+    {
+        $positions = array_values($positions);
+        $teamCount = count($positions);
+        if ($teamCount === 0) {
+            return [];
+        }
+
+        $slotCount = 1;
+        while ($slotCount < $teamCount) {
+            $slotCount *= 2;
+        }
+
+        // Susun tim ke slot bracket dengan urutan seeding standar, lalu isi
+        // sisa slot dengan "Bye". Karena seed teratas menempati slot awal,
+        // bye akan jatuh pada lawan seed teratas — sehingga seed teratas yang
+        // melewati ronde pertama (mis. 3 tim: seed 1 langsung ke Final,
+        // seed 2 vs seed 3 di Semifinal).
+        $seedOrder = $this->bracketSeedOrder($slotCount);
+        $slots = array_fill(0, $slotCount, 'Bye');
+        foreach ($seedOrder as $slotIndex => $seedNumber) {
+            if ($seedNumber <= $teamCount) {
+                $slots[$slotIndex] = $positions[$seedNumber - 1];
+            }
+        }
+
+        $matchId = 1;
+        $matchesById = [];
+
+        // Ronde pertama: satu card per pasangan slot. Slot yang berisi
+        // (tim, Bye) tidak menghasilkan card — tim tersebut langsung
+        // dipromosikan sebagai peserta pada card ronde berikutnya.
+        $previousRound = [];
+        $currentTeamCount = $slotCount;
+        for ($i = 0; $i < $slotCount; $i += 2) {
+            $left = $slots[$i];
+            $right = $slots[$i + 1];
+
+            // Pasangan dua-bye tidak mungkin (slot terisi seed teratas dulu),
+            // tetapi tetap ditangani agar aman.
+            if ($left === 'Bye' && $right === 'Bye') {
+                $previousRound[] = ['advance' => 'Bye'];
+                continue;
+            }
+
+            // Tim bye: lewati ronde ini, bawa tim nyata ke ronde berikutnya.
+            if ($left === 'Bye' || $right === 'Bye') {
+                $previousRound[] = ['advance' => $left === 'Bye' ? $right : $left];
+                continue;
+            }
+
+            $match = [
+                'id' => $matchId++,
+                'round' => $this->roundLabel($currentTeamCount),
+                'left' => $left,
+                'right' => $right,
+                'next_match_id' => null,
+                'is_bye' => false,
+                'is_third_place' => false,
+            ];
+            $matchesById[$match['id']] = $match;
+            $previousRound[] = ['match_id' => $match['id']];
+        }
+
+        // Ronde-ronde berikutnya. Setiap entri $previousRound adalah salah satu
+        // dari: ['match_id' => N] (peserta = pemenang match N) atau
+        // ['advance' => 'A1'] (peserta = tim yang dipromosikan langsung).
+        while (count($previousRound) > 1) {
+            $currentTeamCount /= 2;
+            $currentRound = [];
+
+            for ($i = 0; $i < count($previousRound); $i += 2) {
+                $leftSource = $previousRound[$i];
+                $rightSource = $previousRound[$i + 1] ?? null;
+
+                $resolveLabel = fn ($source) => isset($source['match_id'])
+                    ? 'Pemenang M' . $source['match_id']
+                    : ($source['advance'] ?? 'Bye');
+
+                $match = [
+                    'id' => $matchId++,
+                    'round' => $this->roundLabel($currentTeamCount),
+                    'left' => $resolveLabel($leftSource),
+                    'right' => $rightSource ? $resolveLabel($rightSource) : 'Bye',
+                    'next_match_id' => null,
+                    'is_bye' => false,
+                    'is_third_place' => false,
+                ];
+                $matchesById[$match['id']] = $match;
+
+                if (isset($leftSource['match_id'])) {
+                    $matchesById[$leftSource['match_id']]['next_match_id'] = $match['id'];
+                }
+                if ($rightSource && isset($rightSource['match_id'])) {
+                    $matchesById[$rightSource['match_id']]['next_match_id'] = $match['id'];
+                }
+
+                $currentRound[] = ['match_id' => $match['id']];
+            }
+
+            $previousRound = $currentRound;
+        }
+
+        if ($includeThirdPlace) {
+            $semifinalMatches = array_filter($matchesById, fn ($match) => $match['round'] === 'Semifinal');
+            if (count($semifinalMatches) === 2) {
+                $semiIds = array_values(array_map(fn ($match) => $match['id'], $semifinalMatches));
+                $thirdPlaceMatch = [
+                    'id' => $matchId++,
+                    'round' => 'Third Place',
+                    'left' => 'Runner-up M' . $semiIds[0],
+                    'right' => 'Runner-up M' . $semiIds[1],
+                    'next_match_id' => null,
+                    'is_bye' => false,
+                    'is_third_place' => true,
+                ];
+                $matchesById[$thirdPlaceMatch['id']] = $thirdPlaceMatch;
+            }
+        }
+
+        return array_values($matchesById);
+    }
+
+    /**
+     * Hitung posisi vertikal (px) tiap card bracket per kolom berdasarkan graf
+     * feeder→next_match_id: card diletakkan di tengah antara card pengumpannya.
+     * Dengan ini ronde pertama yang "jarang" (tim bye tidak punya card) tetap
+     * tersusun rapi. Mengembalikan [indexKolom][indexMatch] => posisi top.
+     */
+    public static function computeBracketCardTops(array $bracketColumns, float $rowUnit): array
+    {
+        $topsByColumn = [];
+        $topsById = [];
+
+        foreach ($bracketColumns as $columnIndex => $column) {
+            $cursor = 0;
+
+            foreach (array_values($column['matches'] ?? []) as $matchIndex => $match) {
+                $id = $match['id'] ?? null;
+                $feederTops = [];
+
+                if ($id !== null) {
+                    for ($prev = 0; $prev < $columnIndex; $prev++) {
+                        foreach ($bracketColumns[$prev]['matches'] ?? [] as $prevMatch) {
+                            if (($prevMatch['next_match_id'] ?? null) == $id && isset($topsById[$prevMatch['id']])) {
+                                $feederTops[] = $topsById[$prevMatch['id']];
+                            }
+                        }
+                    }
+                }
+
+                $top = $feederTops !== [] ? (min($feederTops) + max($feederTops)) / 2 : $cursor;
+                $top = max($top, $cursor); // hindari tumpang tindih dalam satu kolom
+
+                if ($id !== null) {
+                    $topsById[$id] = $top;
+                }
+
+                $topsByColumn[$columnIndex][$matchIndex] = $top;
+                $cursor = $top + $rowUnit;
+            }
+        }
+
+        return $topsByColumn;
+    }
+
+    /**
+     * Urutan seed standar untuk bracket berukuran $slotCount (pangkat 2).
+     * Mengembalikan array nomor seed (1 = unggulan teratas) sesuai posisi slot,
+     * sehingga seed teratas bertemu seed terlemah dan bye selalu jatuh pada
+     * lawan seed teratas. Contoh slotCount=4 → [1, 4, 3, 2].
+     */
+    private function bracketSeedOrder(int $slotCount): array
+    {
+        $order = [1];
+        while (count($order) < $slotCount) {
+            $rounds = count($order) * 2;
+            $next = [];
+            foreach ($order as $seed) {
+                $next[] = $seed;
+                $next[] = $rounds + 1 - $seed;
+            }
+            $order = $next;
+        }
+
+        return $order;
+    }
+
+    private function roundLabel(int $teamCount): string
+    {
+        return match ($teamCount) {
+            2 => 'Final',
+            4 => 'Semifinal',
+            8 => 'Quarterfinal',
+            16 => 'Round of 16',
+            32 => 'Round of 32',
+            default => "Round of {$teamCount}",
+        };
+    }
+
     private function attachBracketNextMatchIds(Tournament $tournament): void
     {
         $matches = TournamentMatch::where('tournament_id', $tournament->id)
@@ -394,17 +580,4 @@ class MatchGenerator
         }
     }
 
-    private function buildGroupLabels(int $groupCount): array
-    {
-        return array_slice(['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P'], 0, $groupCount);
-    }
-
-    private function generateLeagueTeamKeys(int $teamCount): array
-    {
-        $teams = [];
-        for ($index = 1; $index <= $teamCount; $index++) {
-            $teams[] = 'League ' . $index;
-        }
-        return $teams;
-    }
 }

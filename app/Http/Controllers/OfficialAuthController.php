@@ -12,7 +12,7 @@ class OfficialAuthController extends Controller
 {
     public function showLogin()
     {
-        return view('official.login');
+        return view('official.auth.login');
     }
 
     public function login(Request $request)

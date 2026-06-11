@@ -64,6 +64,10 @@ Route::middleware(['auth'])->group(function () {
     // Tournament Standings
     Route::get('/tournaments/{tournament}/standings', [TournamentController::class, 'standings'])->name('tournaments.standings');
 
+    // Tournament Document Verification
+    Route::get('/tournaments/{tournament}/verification', [TournamentController::class, 'verification'])->name('tournaments.verification');
+    Route::patch('/tournaments/{tournament}/participants/{participant}/verify', [TournamentController::class, 'verifyParticipant'])->name('tournaments.participants.verify');
+
     Route::post('/logout', function () {
         Auth::logout();
         return redirect('/login');
@@ -72,15 +76,15 @@ Route::middleware(['auth'])->group(function () {
 
 // Portal landing page for admin, official, and public access
 Route::get('/portal', function () {
-    return view('portal');
+    return view('public.portal');
 })->name('portal');
 
 Route::get('/', function () {
-    return view('portal');
+    return view('public.portal');
 });
 
 Route::get('/public/login', function () {
-    return view('auth.login-placeholder', [
+    return view('public.auth.login-placeholder', [
         'title' => 'Login Publik',
         'description' => 'Halaman login publik untuk peserta dan penonton.',
     ]);

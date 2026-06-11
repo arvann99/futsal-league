@@ -11,12 +11,12 @@ class TeamController extends Controller
     public function index()
     {
         $teams = Team::latest()->get();
-        return view('teams.index', compact('teams'));
+        return view('admin.teams.index', compact('teams'));
     }
 
     public function create()
     {
-        return view('teams.create');
+        return view('admin.teams.create');
     }
 
     public function store(Request $request)
@@ -43,7 +43,7 @@ class TeamController extends Controller
 
     public function edit(Team $team)
     {
-        return view('teams.edit', compact('team'));
+        return view('admin.teams.edit', compact('team'));
     }
 
     public function update(Request $request, Team $team)

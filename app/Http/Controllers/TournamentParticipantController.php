@@ -16,12 +16,12 @@ class TournamentParticipantController extends Controller
     {
         $participants = $tournament->tournamentTeams()->with('team')->get();
 
-        return view('tournaments.participants.index', compact('tournament', 'participants'));
+        return view('admin.tournaments.participants.index', compact('tournament', 'participants'));
     }
 
     public function create(Tournament $tournament)
     {
-        return view('tournaments.participants.create', compact('tournament'));
+        return view('admin.tournaments.participants.create', compact('tournament'));
     }
 
     public function store(Request $request, Tournament $tournament)
@@ -56,9 +56,13 @@ class TournamentParticipantController extends Controller
             'country' => $validated['country'],
         ]);
 
+        $tournament->load('groupSetting');
+        $groupLabel = $this->assignGroupLabel($tournament);
+
         TournamentTeam::create([
             'tournament_id' => $tournament->id,
             'team_id' => $team->id,
+            'group_label' => $groupLabel,
         ]);
 
         // Regenerate tournament schedule/bracket after participant added
@@ -76,7 +80,7 @@ class TournamentParticipantController extends Controller
 
         $participant->load('team');
 
-        return view('tournaments.participants.edit', compact('tournament', 'participant'));
+        return view('admin.tournaments.participants.edit', compact('tournament', 'participant'));
     }
 
     public function update(Request $request, Tournament $tournament, TournamentTeam $participant)
@@ -150,6 +154,40 @@ class TournamentParticipantController extends Controller
         }
 
         return $slug;
+    }
+
+    private function assignGroupLabel(Tournament $tournament): ?string
+    {
+        // Mode turnamen (gugur murni) tidak memakai grup
+        $bracketSetting = \App\Models\AppSetting::where('key', 'tournament_' . $tournament->id . '_bracket_settings')->first();
+        if (($bracketSetting?->value['competition_type'] ?? 'tournament') === 'tournament') {
+            return null;
+        }
+
+        $setting = $tournament->groupSetting;
+        if (! $setting || ! $setting->group_count || ! $setting->teams_per_group) {
+            return null;
+        }
+
+        $groupLetters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+        $totalGroups = min($setting->group_count, count($groupLetters));
+
+        $counts = TournamentTeam::where('tournament_id', $tournament->id)
+            ->whereNotNull('group_label')
+            ->selectRaw('group_label, COUNT(*) as total')
+            ->groupBy('group_label')
+            ->pluck('total', 'group_label')
+            ->toArray();
+
+        for ($i = 0; $i < $totalGroups; $i++) {
+            $label = $groupLetters[$i];
+            $currentCount = $counts[$label] ?? 0;
+            if ($currentCount < $setting->teams_per_group) {
+                return $label;
+            }
+        }
+
+        return $groupLetters[0] ?? 'A';
     }
 
     

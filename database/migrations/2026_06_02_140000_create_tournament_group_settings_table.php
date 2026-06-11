@@ -15,7 +15,7 @@ return new class extends Migration
             $table->id();
             $table->foreignId('tournament_id')->constrained('tournaments')->onDelete('cascade');
             $table->integer('teams_per_group')->default(4);
-            $table->json('qualified_teams')->default('[]'); // Contoh: [1, 2] berarti tim ranking 1 dan 2 lolos
+            $table->json('qualified_teams')->nullable();
             $table->timestamps();
         });
     }

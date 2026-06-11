@@ -12,7 +12,7 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('tournament_group_settings', function (Blueprint $table) {
-            $table->json('relegated_teams')->default('[]')->after('qualified_teams');
+            $table->json('relegated_teams')->nullable()->after('qualified_teams');
         });
     }
 

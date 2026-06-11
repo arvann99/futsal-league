@@ -9,7 +9,7 @@ class AuthController extends Controller
 {
     // Menampilkan form login
     public function showLogin() {
-        return view('login');
+        return view('admin.auth.login');
     }
 
     // Proses login

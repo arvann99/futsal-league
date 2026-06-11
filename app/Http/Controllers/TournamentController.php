@@ -23,13 +23,13 @@ class TournamentController extends Controller
     public function index()
     {
         $tournaments = Tournament::with('creator')->latest()->get();
-        return view('tournaments.index', compact('tournaments'));
+        return view('admin.tournaments.index', compact('tournaments'));
     }
 
     // Tampilkan form buat turnamen baru
     public function create()
     {
-        return view('tournaments.create');
+        return view('admin.tournaments.create');
     }
 
     // Simpan turnamen baru ke database
@@ -54,7 +54,7 @@ class TournamentController extends Controller
     public function show(Tournament $tournament)
     {
         $tournament->load('creator');
-        return view('tournaments.show', compact('tournament'));
+        return view('admin.tournaments.show', compact('tournament'));
     }
 
     // Tampilkan dashboard management turnamen
@@ -82,13 +82,13 @@ class TournamentController extends Controller
         $isLeaguePlayoff = $competitionType === 'league_playoff' && ($hasPromotion || $hasRelegation);
         $bracketAdminAvailable = $isTournament || $isLeaguePlayoff;
 
-        return view('tournaments.manage', compact('tournament', 'statistics', 'competitionType', 'bracketAdminAvailable'));
+        return view('admin.tournaments.manage', compact('tournament', 'statistics', 'competitionType', 'bracketAdminAvailable'));
     }
 
     // Tampilkan form edit turnamen
     public function edit(Tournament $tournament)
     {
-        return view('tournaments.edit', compact('tournament'));
+        return view('admin.tournaments.edit', compact('tournament'));
     }
 
     // Update turnamen
@@ -149,7 +149,11 @@ class TournamentController extends Controller
     // Tampilkan form pengaturan turnamen (Pengaturan Kelolosan Grup)
     public function settings(Tournament $tournament)
     {
-        return view('tournaments.settings', compact('tournament'));
+        $tournament->load('groupSetting');
+        $bracketSetting = AppSetting::where('key', $this->bracketSettingsKey($tournament))->first();
+        $competitionType = $bracketSetting?->value['competition_type'] ?? 'tournament';
+
+        return view('admin.tournaments.settings.index', compact('tournament', 'competitionType'));
     }
 
     private function assignGroupLabelsToTournamentTeams(Tournament $tournament, int $groupCount, int $teamsPerGroup): void
@@ -221,9 +225,9 @@ class TournamentController extends Controller
         $matches = $this->filterScheduleMatches($scheduleMatches, $selectedTab);
 
         $view = match ($competitionType) {
-            'league' => 'tournaments.schedule.league',
-            'league_playoff' => 'tournaments.schedule.league-playoff',
-            default => 'tournaments.schedule.bracket',
+            'league' => 'admin.tournaments.schedule.league',
+            'league_playoff' => 'admin.tournaments.schedule.league-playoff',
+            default => 'admin.tournaments.schedule.bracket',
         };
 
         return view($view, compact('tournament', 'matches', 'tabs', 'selectedTab', 'competitionType'));
@@ -362,7 +366,7 @@ class TournamentController extends Controller
         $bracketSetting = $this->resolveBracketSetting($tournament);
         $competitionType = $bracketSetting->value['competition_type'] ?? 'tournament';
 
-        return view('tournaments.settings-group', compact('tournament', 'bracketSetting', 'competitionType'));
+        return view('admin.tournaments.settings.group', compact('tournament', 'bracketSetting', 'competitionType'));
     }
 
     public function pointsSettings(Tournament $tournament)
@@ -404,7 +408,7 @@ class TournamentController extends Controller
             $setting->update(['value' => $value]);
         }
 
-        return view('tournaments.settings-points', compact('tournament', 'setting'));
+        return view('admin.tournaments.settings.points', compact('tournament', 'setting'));
     }
 
     public function updatePointSettings(Request $request, Tournament $tournament)
@@ -504,7 +508,13 @@ class TournamentController extends Controller
         
         // Generate teams based on mode and current group settings
         // CRITICAL: Always read from tournament.groupSetting for current configuration
-        if ($hasBothOptions) {
+        if ($competitionType === 'tournament') {
+            // Gugur murni: slot bracket adalah tim terverifikasi itu sendiri
+            $teamNames = $this->approvedTeamNames($tournament);
+            $teamsToUse = array_combine($teamNames, $teamNames) ?: [];
+            $teamsToUsePromotion = null;
+            $teamsToUseRelegation = null;
+        } elseif ($hasBothOptions) {
             // Untuk "Promosi & Degradasi", generate kedua teams
             $promotionRanks = $tournament->groupSetting->qualified_teams ?? [1, 2];
             $relegationRanks = $tournament->groupSetting->relegated_teams ?? [];
@@ -556,19 +566,30 @@ class TournamentController extends Controller
             // Single mode - use standard matches key
             $matches = $value['matches'] ?? [];
             if (! is_array($matches) || count($matches) === 0 || ! $this->isBracketStructureValid($matches)) {
-                // Determine ranks to use for generating default bracket matches
-                if ($playoffMode === 'promotion') {
-                    $rankForMatches = $tournament->groupSetting->qualified_teams ?? [1, 2];
+                if ($competitionType === 'tournament') {
+                    // Gugur murni: slot bracket berasal dari tim terverifikasi
+                    $value['matches'] = $this->generateKnockoutBracketFromTeams(
+                        $tournament,
+                        (bool) ($value['third_place'] ?? false)
+                    );
                 } else {
-                    $rankForMatches = $tournament->groupSetting->relegated_teams ?? [];
+                    // Determine ranks to use for generating default bracket matches
+                    if ($playoffMode === 'promotion') {
+                        $rankForMatches = $tournament->groupSetting->qualified_teams ?? [1, 2];
+                    } else {
+                        $rankForMatches = $tournament->groupSetting->relegated_teams ?? [];
+                    }
+
+                    $value['matches'] = $this->generateDefaultBracketMatches(
+                        $value['group_count'],
+                        $rankForMatches,
+                        (bool) ($value['third_place'] ?? false)
+                    );
                 }
-                
-                $value['matches'] = $this->generateDefaultBracketMatches(
-                    $value['group_count'],
-                    $rankForMatches,
-                    (bool) ($value['third_place'] ?? false)
-                );
-                $updated = true;
+
+                if ($value['matches'] !== $matches) {
+                    $updated = true;
+                }
             }
         }
 
@@ -576,7 +597,7 @@ class TournamentController extends Controller
             $setting->update(['value' => $value]);
         }
 
-        return view('tournaments.settings-bracket', compact('tournament', 'setting', 'competitionType', 'playoffOptions', 'playoffMode', 'teamsToUse', 'hasBothOptions', 'teamsToUsePromotion', 'teamsToUseRelegation'));
+        return view('admin.tournaments.settings.bracket', compact('tournament', 'setting', 'competitionType', 'playoffOptions', 'playoffMode', 'teamsToUse', 'hasBothOptions', 'teamsToUsePromotion', 'teamsToUseRelegation'));
     }
 
     public function bracketAdmin(Tournament $tournament)
@@ -602,15 +623,9 @@ class TournamentController extends Controller
         $bracketAllowed = $isTournament || $isLeaguePlayoff;
 
         if ($competitionType === 'league') {
-            $playoffMode = 'none';
-            $teamsToUse = [];
-            $isLeaguePlayoffWithPromotion = false;
-            $isLeaguePlayoffWithRelegation = false;
-
-            $tournamentTeams = collect();
-            $assignedMatches = collect();
-            $groupStageComplete = false;
-            return view('tournaments.bracket-admin', compact('tournament', 'setting', 'teamsToUse', 'competitionType', 'isLeaguePlayoffWithPromotion', 'isLeaguePlayoffWithRelegation', 'playoffMode', 'tournamentTeams', 'assignedMatches', 'groupStageComplete'));
+            // Sistem liga murni tidak memiliki babak gugur
+            return redirect()->route('tournaments.standings', $tournament)
+                           ->with('warning', 'Sistem Liga tidak menggunakan babak gugur. Hasil akhir ditentukan dari tabel klasemen.');
         }
 
         if (! $bracketAllowed) {
@@ -637,7 +652,11 @@ class TournamentController extends Controller
         }
 
         // Generate teams berdasarkan mode - ALWAYS FRESH FROM GROUP SETTINGS
-        if ($playoffMode === 'promotion' || $isTournament) {
+        if ($isTournament) {
+            // Gugur murni: slot bracket adalah tim terverifikasi itu sendiri
+            $teamNames = $this->approvedTeamNames($tournament);
+            $teamsToUse = array_combine($teamNames, $teamNames) ?: [];
+        } elseif ($playoffMode === 'promotion') {
             $teamsToUse = $this->generateQualifiedTeams($tournament, $groupCount, $qualifiedRanks);
         } else {
             $teamsToUse = $this->generateRelegatedTeams($groupCount, $relegatedRanks);
@@ -655,12 +674,26 @@ class TournamentController extends Controller
             ->get()
             ->keyBy('bracket_match_id');
 
-        $groupStageComplete = $this->isGroupStageComplete($tournament);
+        // Mode turnamen (gugur murni) tidak memiliki fase grup yang harus ditunggu
+        $groupStageComplete = $isTournament ? true : $this->isGroupStageComplete($tournament);
 
-        $qualifiedTeams = $this->getQualifiedTeams($tournament);
+        $qualifiedTeams = $isTournament ? [] : $this->getQualifiedTeams($tournament);
         $qualifiedTeamOptions = [];
 
-        if (! empty($qualifiedTeams)) {
+        if ($isTournament) {
+            $tournament->load('tournamentTeams.team');
+            foreach ($tournament->tournamentTeams as $tournamentTeam) {
+                if (($tournamentTeam->team?->verification_status ?? 'pending') !== 'approved') {
+                    continue;
+                }
+
+                $teamName = $tournamentTeam->team?->name ?? "Tim {$tournamentTeam->id}";
+                $qualifiedTeamOptions[$tournamentTeam->id] = [
+                    'position' => $teamName,
+                    'name' => $teamName,
+                ];
+            }
+        } elseif (! empty($qualifiedTeams)) {
             $tournament->load('tournamentTeams.team');
             $teamMap = $tournament->tournamentTeams->keyBy('id');
 
@@ -673,7 +706,7 @@ class TournamentController extends Controller
             }
         }
 
-        return view('tournaments.bracket-admin', compact('tournament', 'setting', 'teamsToUse', 'competitionType', 'isLeaguePlayoffWithPromotion', 'isLeaguePlayoffWithRelegation', 'playoffMode', 'tournamentTeams', 'assignedMatches', 'groupStageComplete', 'qualifiedTeamOptions'));
+        return view('admin.tournaments.bracket.manage', compact('tournament', 'setting', 'teamsToUse', 'competitionType', 'isLeaguePlayoffWithPromotion', 'isLeaguePlayoffWithRelegation', 'playoffMode', 'tournamentTeams', 'assignedMatches', 'groupStageComplete', 'qualifiedTeamOptions'));
     }
 
     public function saveBracketAssignments(Request $request, Tournament $tournament)
@@ -944,15 +977,26 @@ class TournamentController extends Controller
             $updated = true;
         }
 
-        $qualifiedRanks = $tournament->groupSetting->qualified_teams ?? [1, 2];
         $matches = $value['matches'] ?? [];
         if (! is_array($matches) || count($matches) === 0 || ! $this->isBracketStructureValid($matches)) {
-            $value['matches'] = $this->generateDefaultBracketMatches(
-                $value['group_count'],
-                $qualifiedRanks,
-                (bool) ($value['third_place'] ?? false)
-            );
-            $updated = true;
+            if ($value['competition_type'] === 'tournament') {
+                // Gugur murni: slot bracket berasal dari tim terverifikasi
+                $value['matches'] = $this->generateKnockoutBracketFromTeams(
+                    $tournament,
+                    (bool) ($value['third_place'] ?? false)
+                );
+            } else {
+                $qualifiedRanks = $tournament->groupSetting->qualified_teams ?? [1, 2];
+                $value['matches'] = $this->generateDefaultBracketMatches(
+                    $value['group_count'],
+                    $qualifiedRanks,
+                    (bool) ($value['third_place'] ?? false)
+                );
+            }
+
+            if ($value['matches'] !== $matches) {
+                $updated = true;
+            }
         }
 
         if ($updated) {
@@ -1122,6 +1166,12 @@ class TournamentController extends Controller
                 $relegatedRanks,
                 isset($validated['third_place'])
             );
+        } elseif ($competitionType === 'tournament') {
+            // Gugur murni: regenerate slot bracket dari tim terverifikasi
+            $matches = $this->generateKnockoutBracketFromTeams(
+                $tournament,
+                isset($validated['third_place'])
+            );
         } else {
             if ($competitionType === 'league_playoff' && in_array('relegation', $playoffOptions) && ! in_array('promotion', $playoffOptions)) {
                 $ranksToUse = $relegatedRanks;
@@ -1170,103 +1220,37 @@ class TournamentController extends Controller
             }
         }
 
-        $teamCount = count($positions);
-        if ($teamCount === 0) {
+        return app(MatchGenerator::class)->buildBracketStructure($positions, $includeThirdPlace);
+    }
+
+    /**
+     * Struktur bracket default untuk mode turnamen (gugur murni): slot diisi
+     * langsung oleh nama tim yang lolos verifikasi, tanpa placeholder grup.
+     */
+    private function generateKnockoutBracketFromTeams(Tournament $tournament, bool $includeThirdPlace = false): array
+    {
+        $positions = $this->approvedTeamNames($tournament);
+
+        if (count($positions) < 2) {
             return [];
         }
 
-        $slotCount = 1;
-        while ($slotCount < $teamCount) {
-            $slotCount *= 2;
-        }
+        return app(MatchGenerator::class)->buildBracketStructure($positions, $includeThirdPlace);
+    }
 
-        $byeCount = $slotCount - $teamCount;
-        $matchId = 1;
-        $matchesById = [];
-        $firstRound = [];
+    /**
+     * Nama tim yang lolos verifikasi, diurutkan berdasarkan seed.
+     */
+    private function approvedTeamNames(Tournament $tournament): array
+    {
+        $tournament->load('tournamentTeams.team');
 
-        while (count($positions) > 0) {
-            if (count($positions) === $byeCount) {
-                while (count($positions) > 0) {
-                    $firstRound[] = [
-                        'id' => $matchId++,
-                        'round' => $this->roundLabel($slotCount),
-                        'left' => array_shift($positions),
-                        'right' => 'Bye',
-                        'next_match_id' => null,
-                        'is_bye' => true,
-                        'is_third_place' => false,
-                    ];
-                }
-                break;
-            }
-
-            $firstRound[] = [
-                'id' => $matchId++,
-                'round' => $this->roundLabel($slotCount),
-                'left' => array_shift($positions),
-                'right' => array_shift($positions) ?? 'Bye',
-                'next_match_id' => null,
-                'is_bye' => false,
-                'is_third_place' => false,
-            ];
-        }
-
-        foreach ($firstRound as $match) {
-            $matchesById[$match['id']] = $match;
-        }
-
-        $previousRound = $firstRound;
-        $currentTeamCount = $slotCount;
-        while (count($previousRound) > 1) {
-            $currentTeamCount /= 2;
-            $currentRound = [];
-
-            for ($i = 0; $i < count($previousRound); $i += 2) {
-                $leftMatch = $previousRound[$i];
-                $rightMatch = $previousRound[$i + 1] ?? null;
-
-                $currentMatch = [
-                    'id' => $matchId++,
-                    'round' => $this->roundLabel($currentTeamCount),
-                    'left' => 'Pemenang M' . $leftMatch['id'],
-                    'right' => $rightMatch ? 'Pemenang M' . $rightMatch['id'] : 'Bye',
-                    'next_match_id' => null,
-                    'is_bye' => $rightMatch === null,
-                    'is_third_place' => false,
-                ];
-
-                $matchesById[$currentMatch['id']] = $currentMatch;
-                $matchesById[$leftMatch['id']]['next_match_id'] = $currentMatch['id'];
-
-                if ($rightMatch) {
-                    $matchesById[$rightMatch['id']]['next_match_id'] = $currentMatch['id'];
-                }
-
-                $currentRound[] = $currentMatch;
-            }
-
-            $previousRound = $currentRound;
-        }
-
-        if ($includeThirdPlace) {
-            $semifinalMatches = array_filter($matchesById, fn ($match) => $match['round'] === 'Semifinal');
-            if (count($semifinalMatches) === 2) {
-                $semiIds = array_values(array_map(fn ($match) => $match['id'], $semifinalMatches));
-                $thirdPlaceMatch = [
-                    'id' => $matchId++,
-                    'round' => 'Third Place',
-                    'left' => 'Runner-up M' . $semiIds[0],
-                    'right' => 'Runner-up M' . $semiIds[1],
-                    'next_match_id' => null,
-                    'is_bye' => false,
-                    'is_third_place' => true,
-                ];
-                $matchesById[$thirdPlaceMatch['id']] = $thirdPlaceMatch;
-            }
-        }
-
-        return array_values($matchesById);
+        return $tournament->tournamentTeams
+            ->filter(fn ($team) => ($team->team?->verification_status ?? 'pending') === 'approved')
+            ->sortBy(fn ($team) => $team->seed ?? 0)
+            ->map(fn ($team) => $team->team?->name ?? ('Tim ' . $team->id))
+            ->values()
+            ->all();
     }
 
     private function isBracketStructureValid(array $matches): bool
@@ -1278,18 +1262,6 @@ class TournamentController extends Controller
         }
 
         return true;
-    }
-
-    private function roundLabel(int $teamCount): string
-    {
-        return match ($teamCount) {
-            2 => 'Final',
-            4 => 'Semifinal',
-            8 => 'Quarterfinal',
-            16 => 'Round of 16',
-            32 => 'Round of 32',
-            default => "Round of {$teamCount}",
-        };
     }
 
     public function resetBracketSettings(Tournament $tournament)
@@ -1321,8 +1293,8 @@ class TournamentController extends Controller
     {
         $validated = $request->validate([
             'competition_type' => 'required|in:tournament,league,league_playoff',
-            'teams_per_group' => 'required|integer|min:2|max:20',
-            'group_count' => 'required|integer|min:1|max:32',
+            'teams_per_group' => 'exclude_if:competition_type,tournament|required|integer|min:2|max:20',
+            'group_count' => 'exclude_if:competition_type,tournament|required|integer|min:1|max:32',
             'playoff_type' => 'required_if:competition_type,league_playoff|in:promotion,relegation,both',
             'qualified_teams' => 'array',
             'qualified_teams.*' => 'integer|min:1',
@@ -1342,17 +1314,17 @@ class TournamentController extends Controller
         // Validasi khusus berdasarkan jenis kompetisi
         $competitionType = $validated['competition_type'];
         $playoffType = $validated['playoff_type'] ?? null;
-        
-        // Untuk tournament, qualified_teams harus diisi
+
+        // Turnamen = babak gugur murni tanpa fase grup: pengaturan grup dan
+        // ranking kelolosan tidak berlaku. Bracket dibuat otomatis dari tim
+        // yang lolos verifikasi.
         if ($competitionType === 'tournament') {
-            $qualified = array_filter($validated['qualified_teams'] ?? []);
-            if (empty($qualified)) {
-                return back()->withErrors([
-                    'qualified_teams' => 'Pilih minimal 1 ranking tim yang akan lolos'
-                ])->withInput();
-            }
+            $validated['teams_per_group'] = 2;
+            $validated['group_count'] = 1;
+            $validated['qualified_teams'] = [];
+            $validated['relegated_teams'] = [];
         }
-        
+
         // Untuk league, relegated_teams harus diisi
         if ($competitionType === 'league') {
             $relegated = array_filter($validated['relegated_teams'] ?? []);
@@ -1411,10 +1383,7 @@ class TournamentController extends Controller
         $qualified = [];
         $relegated = [];
 
-        if ($validated['competition_type'] === 'tournament') {
-            $qualified = array_values(array_unique(array_filter($validated['qualified_teams'] ?? [])));
-            sort($qualified);
-        } else {
+        if ($validated['competition_type'] !== 'tournament') {
             // For league and league_playoff
             $qualified = array_values(array_unique(array_filter($validated['qualified_teams'] ?? [])));
             sort($qualified);
@@ -1424,7 +1393,7 @@ class TournamentController extends Controller
 
         // Validasi: ranking tidak boleh melebihi jumlah tim per grup
         if ($validated['competition_type'] === 'tournament') {
-            $selectedRanks = $qualified;
+            $selectedRanks = [];
         } elseif ($validated['competition_type'] === 'league_playoff') {
             $playoffType = $validated['playoff_type'] ?? 'promotion';
             if ($playoffType === 'both' || $playoffType === 'promotion') {
@@ -1493,7 +1462,17 @@ class TournamentController extends Controller
         }
 
         // Generate matches for bracket settings
-        if ($competitionType === 'league_playoff' && $playoffType === 'both') {
+        if ($competitionType === 'tournament') {
+            // Gugur murni: slot bracket diisi langsung dari tim terverifikasi
+            // dan akan diperbarui otomatis oleh MatchGenerator saat peserta berubah.
+            $bracketValueToSave = [
+                'match_type' => $matchType,
+                'third_place' => $thirdPlace,
+                'competition_type' => 'tournament',
+                'group_count' => 1,
+                'matches' => $this->generateKnockoutBracketFromTeams($tournament, $thirdPlace),
+            ];
+        } elseif ($competitionType === 'league_playoff' && $playoffType === 'both') {
             // For both promotion and relegation, generate separate matches
             $bracketValueToSave = [
                 'match_type' => $matchType,
@@ -1538,12 +1517,24 @@ class TournamentController extends Controller
             ['value' => $bracketValueToSave]
         );
 
-        $this->assignGroupLabelsToTournamentTeams($tournament, $validated['group_count'], $validated['teams_per_group']);
+        // Mode turnamen tidak memakai grup, jadi label grup tidak perlu diatur
+        if ($competitionType !== 'tournament') {
+            $this->assignGroupLabelsToTournamentTeams($tournament, $validated['group_count'], $validated['teams_per_group']);
+        }
 
         app(MatchGenerator::class)->generateForTournament($tournament);
 
+        $rankLabels = fn (array $ranks) => implode(', ', array_map(fn ($r) => "Ranking $r", $ranks));
+        $successMessage = match ($competitionType) {
+            'tournament' => 'Pengaturan disimpan! Sistem Turnamen (babak gugur) tidak memakai fase grup — bracket dibuat otomatis dari tim yang lolos verifikasi.',
+            'league' => 'Pengaturan disimpan! Sistem Liga tanpa babak gugur. Tim degradasi: ' . ($relegated ? $rankLabels($relegated) : '-') . '.',
+            default => 'Pengaturan Liga + Play Off disimpan!'
+                . ($qualified ? ' Play off promosi/juara: ' . $rankLabels($qualified) . '.' : '')
+                . ($relegated ? ' Play off degradasi: ' . $rankLabels($relegated) . '.' : ''),
+        };
+
         return redirect()->route('tournaments.groupSettings', $tournament)
-                         ->with('success', 'Pengaturan kelolosan grup berhasil disimpan! Tim yang lolos: ' . implode(', ', array_map(fn($r) => "Ranking $r", $qualified)));
+                         ->with('success', $successMessage);
     }
 
     // Reset/Delete pengaturan kelolosan grup
@@ -1638,7 +1629,7 @@ class TournamentController extends Controller
             return true;
         }));
 
-        return view('tournaments.schedule-admin', compact('tournament', 'filtered', 'tabs', 'filters', 'filterOptions'));
+        return view('admin.tournaments.schedule.manage', compact('tournament', 'filtered', 'tabs', 'filters', 'filterOptions'));
     }
 
     public function updateMatch(Request $request, Tournament $tournament, TournamentMatch $match)
@@ -2127,6 +2118,39 @@ class TournamentController extends Controller
     }
 
     // Tampilkan bagan klasemen grup
+    public function verification(Tournament $tournament)
+    {
+        $participants = TournamentTeam::with(['team', 'players'])
+            ->where('tournament_id', $tournament->id)
+            ->get();
+
+        return view('admin.tournaments.verification', compact('tournament', 'participants'));
+    }
+
+    public function verifyParticipant(Request $request, Tournament $tournament, TournamentTeam $participant)
+    {
+        if ($participant->tournament_id !== $tournament->id) {
+            abort(404);
+        }
+
+        $validated = $request->validate([
+            'status' => 'required|in:pending,approved,rejected',
+        ]);
+
+        $participant->team->verification_status = $validated['status'];
+        $participant->team->save();
+
+        app(MatchGenerator::class)->generateForTournament($tournament);
+
+        $statusText = [
+            'pending' => 'pending',
+            'approved' => 'terverifikasi',
+            'rejected' => 'ditolak',
+        ][$validated['status']];
+
+        return back()->with('success', "Status verifikasi {$participant->team->name} diubah menjadi {$statusText}.");
+    }
+
     public function standings(Tournament $tournament)
     {
         $tournament->load('groupSetting');
@@ -2137,14 +2161,20 @@ class TournamentController extends Controller
                            ->with('warning', 'Silakan atur pengaturan kelolosan grup terlebih dahulu');
         }
 
-        $setting = $tournament->groupSetting;
-        $groups = $this->buildStandingsGroups($tournament);
-
         // Get competition type and playoff settings
         $bracketSetting = AppSetting::where('key', $this->bracketSettingsKey($tournament))->first();
         $bracketValue = $bracketSetting?->value ?? [];
         $competitionType = $bracketValue['competition_type'] ?? 'tournament';
         $playoffOptions = $bracketValue['playoff_options'] ?? [];
+
+        // Sistem turnamen (gugur murni) tidak memiliki klasemen grup
+        if ($competitionType === 'tournament') {
+            return redirect()->route('tournaments.bracketAdmin', $tournament)
+                           ->with('warning', 'Sistem Turnamen (babak gugur) tidak menggunakan klasemen grup. Hasil ditentukan lewat bracket gugur.');
+        }
+
+        $setting = $tournament->groupSetting;
+        $groups = $this->buildStandingsGroups($tournament);
         $playoffType = in_array('promotion', $playoffOptions, true) && in_array('relegation', $playoffOptions, true)
             ? 'both'
             : (in_array('promotion', $playoffOptions, true) ? 'promotion' :
@@ -2180,7 +2210,7 @@ class TournamentController extends Controller
             }
         }
 
-        return view('tournaments.standings', compact('tournament', 'groups', 'setting', 'competitionType', 'playoffType', 'playoffPromotionTeams', 'hasPlayoffPromotion', 'playoffRelegationTeams', 'hasPlayoffRelegation'));
+        return view('admin.tournaments.standings', compact('tournament', 'groups', 'setting', 'competitionType', 'playoffType', 'playoffPromotionTeams', 'hasPlayoffPromotion', 'playoffRelegationTeams', 'hasPlayoffRelegation'));
     }
 
     private function buildStandingsGroups(Tournament $tournament): array
@@ -2275,9 +2305,26 @@ class TournamentController extends Controller
         $hasGroups = $teams->pluck('group_label')->filter()->isNotEmpty();
         $grouped = [];
 
+        $groupLetters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+        $setting = $tournament->groupSetting;
+        $groupCount = $setting?->group_count ?? 0;
+        
+        for ($i = 1; $i <= $groupCount; $i++) {
+            $groupLabel = $groupLetters[$i - 1] ?? (string) $i;
+            $grouped[$groupLabel] = [];
+        }
+
         foreach ($teamStats as $teamStat) {
-            $groupLabel = $hasGroups ? ($teamStat['group_label'] ?? 'Tanpa Grup') : 'Klasemen Umum';
-            $grouped[$groupLabel][] = $teamStat;
+            if ($hasGroups && !empty($teamStat['group_label'])) {
+                $groupLabel = $teamStat['group_label'];
+            } else {
+                $groupLabel = $groupLetters[0] ?? 'A';
+            }
+            if (isset($grouped[$groupLabel])) {
+                $grouped[$groupLabel][] = $teamStat;
+            } else {
+                $grouped[$groupLetters[0] ?? 'A'][] = $teamStat;
+            }
         }
 
         foreach ($grouped as $groupLabel => $rows) {
