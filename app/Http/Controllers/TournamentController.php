@@ -9,6 +9,7 @@ use App\Models\TournamentTeam;
 use App\Models\AppSetting;
 use App\Models\TournamentGroupSetting;
 use App\Services\MatchGenerator;
+use App\Services\TieResolver;
 use App\Debug\MatchTimelineTracer;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -198,11 +199,17 @@ class TournamentController extends Controller
         $matches = TournamentMatch::where('tournament_id', $tournament->id)
             ->orderByRaw("FIELD(stage_type, 'group', 'league', 'knockout', 'promotion_playoff', 'relegation_playoff')")
             ->orderBy('group_label')
-            ->orderBy('round_name')
             ->orderBy('bracket_match_id')
+            ->orderBy('leg')
+            ->orderBy('round_name')
+            ->orderBy('id')
             ->get();
 
-        $scheduleMatches = $matches->map(function ($match) {
+        $tieResolver = app(TieResolver::class);
+
+        $scheduleMatches = $matches->map(function ($match) use ($tieResolver, $matches) {
+            $leg1 = $match->leg === 2 ? $tieResolver->siblingLeg($match, $matches) : null;
+
             return [
                 'id' => $match->id,
                 'stage_type' => $match->stage_type,
@@ -213,10 +220,16 @@ class TournamentController extends Controller
                 'right' => $match->away_team_key ?? $match->source_away,
                 'score_left' => $match->home_score,
                 'score_right' => $match->away_score,
+                'home_penalty_score' => $match->home_penalty_score,
+                'away_penalty_score' => $match->away_penalty_score,
+                'leg' => $match->leg,
+                'leg1_completed' => $match->leg === 2 ? $leg1?->status === 'full_time' : true,
                 'datetime' => $match->match_date?->toDateTimeString(),
                 'status' => $match->status ?? 'scheduled',
             ];
-        })->toArray();
+        });
+
+        $scheduleMatches = $this->mergeTieRows($matches, $scheduleMatches);
 
         $tabs = $this->buildScheduleTabs($competitionType, $matches);
         $selectedTab = request()->query('tab', 'all');
@@ -291,7 +304,166 @@ class TournamentController extends Controller
         }));
     }
 
+    /**
+     * Payload satu match untuk tabel jadwal & Live Match Event Logger.
+     * Dipakai oleh manageSchedule (semua match) dan respons JSON
+     * storeMatchEvent (refresh logger tanpa reload halaman).
+     */
+    private function buildLoggerMatchPayload(TournamentMatch $match, TieResolver $tieResolver, string $calculationMode, $allMatches = null): array
+    {
+        $leg1 = null;
+        $tieOutcome = null;
+
+        if ($match->leg === 2) {
+            [$leg1] = $tieResolver->getLegs($match, $allMatches);
+            $tieOutcome = $tieResolver->tieOutcome($match, $calculationMode, $allMatches);
+        }
+
+        return [
+            'id' => $match->id,
+            'stage_type' => $match->stage_type,
+            'playoff_type' => $match->playoff_type,
+            'group_label' => $match->group_label,
+            'round_name' => $match->round_name,
+            'round' => $this->buildScheduleLabel($match),
+            'left' => $match->homeTeam?->team?->name ?? $match->source_home ?? $match->home_team_key,
+            'right' => $match->awayTeam?->team?->name ?? $match->source_away ?? $match->away_team_key,
+            'home_team_id' => $match->home_team_id,
+            'away_team_id' => $match->away_team_id,
+            'home_team_key' => $match->home_team_key,
+            'away_team_key' => $match->away_team_key,
+            'source_home' => $match->source_home,
+            'source_away' => $match->source_away,
+            'is_match_ready' => ! is_null($match->home_team_id) && ! is_null($match->away_team_id),
+            'score_left' => $match->home_score,
+            'score_right' => $match->away_score,
+            'home_penalty_score' => $match->home_penalty_score,
+            'away_penalty_score' => $match->away_penalty_score,
+            'leg' => $match->leg,
+            'is_deciding' => $tieResolver->isDecidingMatch($match),
+            'calculation_mode' => $calculationMode,
+            'leg1_completed' => $match->leg === 2 ? $leg1?->status === 'full_time' : true,
+            'leg1' => $leg1 ? [
+                'home' => $leg1->homeTeam?->team?->name ?? $leg1->source_home ?? $leg1->home_team_key,
+                'away' => $leg1->awayTeam?->team?->name ?? $leg1->source_away ?? $leg1->away_team_key,
+                'home_score' => $leg1->home_score,
+                'away_score' => $leg1->away_score,
+                'status' => $leg1->status,
+            ] : null,
+            'agg_home' => $tieOutcome['agg_home'] ?? null,
+            'agg_away' => $tieOutcome['agg_away'] ?? null,
+            'wins_home' => $tieOutcome['wins_home'] ?? null,
+            'wins_away' => $tieOutcome['wins_away'] ?? null,
+            'datetime' => $match->match_date?->toDateTimeString(),
+            'status' => $match->status ?? 'scheduled',
+            'venue' => $match->venue,
+            'home_roster' => $this->buildMatchRoster($match->homeTeam),
+            'away_roster' => $this->buildMatchRoster($match->awayTeam),
+            'events' => $match->events->sortBy('created_at')->map(function ($event) {
+                return [
+                    'id' => $event->id,
+                    'event_type' => $event->event_type,
+                    'team_side' => $event->team_side,
+                    'player_name' => $event->player_name,
+                    'created_at' => $event->created_at->toDateTimeString(),
+                ];
+            })->values()->all(),
+        ];
+    }
+
+    /**
+     * Gabungkan dua row leg pada tie yang sama menjadi satu row jadwal.
+     * Row tie memakai orientasi Leg 1; payload lengkap tiap leg tersimpan di
+     * 'legs' (dipakai kolom jadwal ganda dan tab Leg 1/Leg 2 di Live Match
+     * Event Logger).
+     */
+    private function mergeTieRows($allMatches, $payloads): array
+    {
+        $tieResolver = app(TieResolver::class);
+        $payloadById = collect($payloads)->keyBy('id');
+
+        $rows = [];
+        $processed = [];
+
+        foreach ($allMatches as $match) {
+            if (isset($processed[$match->id])) {
+                continue;
+            }
+
+            $payload = $payloadById[$match->id];
+
+            if ($match->leg === null) {
+                $rows[] = $payload;
+                continue;
+            }
+
+            $sibling = $tieResolver->siblingLeg($match, $allMatches);
+
+            if (! $sibling || ! isset($payloadById[$sibling->id])) {
+                $rows[] = $payload;
+                continue;
+            }
+
+            $legOneMatch = $match->leg === 1 ? $match : $sibling;
+            $legTwoMatch = $match->leg === 1 ? $sibling : $match;
+            $processed[$legOneMatch->id] = true;
+            $processed[$legTwoMatch->id] = true;
+
+            $legOne = $payloadById[$legOneMatch->id];
+            $legTwo = $payloadById[$legTwoMatch->id];
+
+            $legStatuses = [$legOne['status'] ?? 'scheduled', $legTwo['status'] ?? 'scheduled'];
+
+            $tieStatus = 'scheduled';
+            if (($legTwo['status'] ?? '') === 'full_time') {
+                $tieStatus = 'full_time';
+            } elseif (in_array('penalty_shootout', $legStatuses, true)) {
+                $tieStatus = 'penalty_shootout';
+            } elseif (in_array('live_match', $legStatuses, true) || ($legOne['status'] ?? '') === 'full_time') {
+                $tieStatus = 'live_match';
+            }
+
+            // Agregat dalam orientasi row (kiri = home Leg 1 = away Leg 2)
+            $aggLeft = null;
+            $aggRight = null;
+            if (($legOne['score_left'] ?? null) !== null && ($legOne['score_right'] ?? null) !== null
+                && ($legTwo['score_left'] ?? null) !== null && ($legTwo['score_right'] ?? null) !== null) {
+                $aggLeft = (int) $legOne['score_left'] + (int) $legTwo['score_right'];
+                $aggRight = (int) $legOne['score_right'] + (int) $legTwo['score_left'];
+            }
+
+            $rows[] = array_merge($legOne, [
+                'is_tie' => true,
+                'round' => $this->buildScheduleBaseLabel($legOneMatch),
+                'status' => $tieStatus,
+                'legs' => [$legOne, $legTwo],
+                'logger_match_id' => ($legOne['status'] ?? '') === 'full_time' ? $legTwo['id'] : $legOne['id'],
+                'tie_agg_left' => $aggLeft,
+                'tie_agg_right' => $aggRight,
+                // Netralkan field per-leg agar badge/lock leg tunggal di tabel
+                // tidak aktif untuk row gabungan.
+                'leg' => null,
+                'leg1_completed' => true,
+                'home_penalty_score' => null,
+                'away_penalty_score' => null,
+            ]);
+        }
+
+        return $rows;
+    }
+
     private function buildScheduleLabel(TournamentMatch $match): string
+    {
+        $label = $this->buildScheduleBaseLabel($match);
+
+        if ($match->leg !== null) {
+            $label .= " (Leg {$match->leg})";
+        }
+
+        return $label;
+    }
+
+    private function buildScheduleBaseLabel(TournamentMatch $match): string
     {
         if ($match->stage_type === 'group' && $match->group_label) {
             return trim("Grup {$match->group_label} • {$match->round_name}");
@@ -316,21 +488,42 @@ class TournamentController extends Controller
         return $match->round_name ?: ucfirst(str_replace('_', ' ', $match->stage_type));
     }
 
-    private function generateLiveMatchRoster(string $side): array
+    /**
+     * Roster pemain untuk Live Match Event Logger dari pemain terdaftar tim.
+     * Karena roster diambil dari tim match itu sendiri, pada Leg 2 (home/away
+     * dibalik) lineup otomatis ikut bertukar sisi.
+     */
+    private function buildMatchRoster(?TournamentTeam $tournamentTeam): array
     {
-        if ($side === 'home') {
-            return [
-                ['label' => 'Ahmad #10', 'player_name' => 'Ahmad #10'],
-                ['label' => 'Rizky #7', 'player_name' => 'Rizky #7'],
-                ['label' => 'Budi #9', 'player_name' => 'Budi #9'],
-            ];
+        if (! $tournamentTeam) {
+            return [];
         }
 
-        return [
-            ['label' => 'Andre #11', 'player_name' => 'Andre #11'],
-            ['label' => 'Yoga #8', 'player_name' => 'Yoga #8'],
-            ['label' => 'Dedi #5', 'player_name' => 'Dedi #5'],
-        ];
+        $players = $tournamentTeam->players
+            ->where('status', 'active')
+            ->sortBy(fn ($player) => $player->shirt_number ?? 9999)
+            ->values();
+
+        if ($players->isEmpty()) {
+            // Tim belum mendaftarkan pemain: sediakan satu kartu tim agar
+            // event tetap bisa dicatat tanpa nama pemain.
+            $teamName = $tournamentTeam->team?->name ?? 'Tim';
+
+            return [[
+                'label' => $teamName . ' (roster belum terdaftar)',
+                'player_name' => null,
+            ]];
+        }
+
+        return $players->map(function ($player) {
+            $label = $player->player_name
+                . ($player->shirt_number !== null ? ' #' . $player->shirt_number : '');
+
+            return [
+                'label' => $label . ($player->is_captain ? ' (C)' : ''),
+                'player_name' => $label,
+            ];
+        })->values()->all();
     }
 
     public function groupSettings(Tournament $tournament)
@@ -453,6 +646,7 @@ class TournamentController extends Controller
         $key = $this->bracketSettingsKey($tournament);
         $default = [
             'match_type' => 'single',
+            'home_away_calculation' => 'aggregate',
             'third_place' => false,
             'group_count' => 4,
             'matches' => [],
@@ -474,6 +668,11 @@ class TournamentController extends Controller
 
         if (! isset($value['third_place'])) {
             $value['third_place'] = $default['third_place'];
+            $updated = true;
+        }
+
+        if (! isset($value['home_away_calculation']) || ! in_array($value['home_away_calculation'], ['aggregate', 'wins'], true)) {
+            $value['home_away_calculation'] = $default['home_away_calculation'];
             $updated = true;
         }
 
@@ -668,9 +867,14 @@ class TournamentController extends Controller
         // Load actual TournamentTeam records for Manual mode selection
         $tournamentTeams = $tournament->tournamentTeams()->with('team')->get();
 
-        // Load assigned matches (by bracket_match_id) so we can display assigned team names/ids
+        // Load assigned matches (by bracket_match_id) so we can display assigned team names/ids.
+        // Mode Home & Away punya 2 row per bracket_match_id — pakai row leg 1
+        // agar orientasi home/away kartu bracket tidak terbalik.
         $assignedMatches = \App\Models\TournamentMatch::where('tournament_id', $tournament->id)
             ->whereNotNull('bracket_match_id')
+            ->where(function ($query) {
+                $query->whereNull('leg')->orWhere('leg', 1);
+            })
             ->get()
             ->keyBy('bracket_match_id');
 
@@ -795,8 +999,14 @@ class TournamentController extends Controller
         $currentValue['matches'] = $currentMatches;
         $setting->update(['value' => $currentValue]);
 
+        // Mode Home & Away punya 2 row per bracket_match_id — penetapan manual
+        // dilakukan pada row entry point (single match atau leg 1), lalu leg 2
+        // disinkronkan (dibalik) setelahnya.
         $dbMatches = \App\Models\TournamentMatch::where('tournament_id', $tournament->id)
             ->whereNotNull('bracket_match_id')
+            ->where(function ($query) {
+                $query->whereNull('leg')->orWhere('leg', 1);
+            })
             ->get()
             ->keyBy('bracket_match_id');
 
@@ -934,7 +1144,64 @@ class TournamentController extends Controller
             }
         });
 
+        $this->syncSecondLegSlots($tournament);
+
         return back()->with('success', 'Tim bracket berhasil disimpan.');
+    }
+
+    /**
+     * Sinkronkan slot tim row leg 2 dari row leg 1 pada tie yang sama, dengan
+     * posisi home/away dibalik. source_home/source_away leg 2 sengaja tidak
+     * disentuh karena masih menyimpan label asal slot.
+     */
+    private function syncSecondLegSlots(Tournament $tournament): void
+    {
+        $legOnes = TournamentMatch::where('tournament_id', $tournament->id)
+            ->where('leg', 1)
+            ->get();
+
+        if ($legOnes->isEmpty()) {
+            return;
+        }
+
+        $legTwos = TournamentMatch::where('tournament_id', $tournament->id)
+            ->where('leg', 2)
+            ->get()
+            ->keyBy(fn ($match) => $match->stage_type . '#' . $match->bracket_match_id);
+
+        foreach ($legOnes as $legOne) {
+            $legTwo = $legTwos[$legOne->stage_type . '#' . $legOne->bracket_match_id] ?? null;
+
+            if (! $legTwo) {
+                continue;
+            }
+
+            $dirty = false;
+
+            if ($legTwo->home_team_id !== $legOne->away_team_id) {
+                $legTwo->home_team_id = $legOne->away_team_id;
+                $dirty = true;
+            }
+
+            if ($legTwo->away_team_id !== $legOne->home_team_id) {
+                $legTwo->away_team_id = $legOne->home_team_id;
+                $dirty = true;
+            }
+
+            if ($legTwo->home_team_key !== $legOne->away_team_key) {
+                $legTwo->home_team_key = $legOne->away_team_key;
+                $dirty = true;
+            }
+
+            if ($legTwo->away_team_key !== $legOne->home_team_key) {
+                $legTwo->away_team_key = $legOne->home_team_key;
+                $dirty = true;
+            }
+
+            if ($dirty) {
+                $legTwo->save();
+            }
+        }
     }
 
     private function resolveBracketSetting(Tournament $tournament): AppSetting
@@ -942,6 +1209,7 @@ class TournamentController extends Controller
         $key = $this->bracketSettingsKey($tournament);
         $default = [
             'match_type' => 'single',
+            'home_away_calculation' => 'aggregate',
             'third_place' => false,
             'competition_type' => 'tournament',
             'group_count' => 4,
@@ -964,6 +1232,11 @@ class TournamentController extends Controller
 
         if (! isset($value['third_place'])) {
             $value['third_place'] = $default['third_place'];
+            $updated = true;
+        }
+
+        if (! isset($value['home_away_calculation']) || ! in_array($value['home_away_calculation'], ['aggregate', 'wins'], true)) {
+            $value['home_away_calculation'] = $default['home_away_calculation'];
             $updated = true;
         }
 
@@ -1120,6 +1393,7 @@ class TournamentController extends Controller
     {
         $validated = $request->validate([
             'match_type' => 'required|in:single,home_away',
+            'home_away_calculation' => 'required_if:match_type,home_away|nullable|in:aggregate,wins',
             'third_place' => 'sometimes|accepted',
             'group_count' => 'required|integer|min:1|max:16',
             'matches' => 'sometimes|array|min:1',
@@ -1128,6 +1402,8 @@ class TournamentController extends Controller
         ], [
             'match_type.required' => 'Pilih jenis pertandingan knock out',
             'match_type.in' => 'Jenis pertandingan tidak valid',
+            'home_away_calculation.required_if' => 'Pilih metode penentuan pemenang Home & Away',
+            'home_away_calculation.in' => 'Metode penentuan pemenang tidak valid',
             'group_count.required' => 'Jumlah grup tidak boleh kosong',
             'group_count.integer' => 'Jumlah grup harus berupa angka',
             'group_count.min' => 'Jumlah grup minimal 2',
@@ -1187,6 +1463,7 @@ class TournamentController extends Controller
 
         $valueToSave = [
             'match_type' => $validated['match_type'],
+            'home_away_calculation' => $validated['home_away_calculation'] ?? ($currentValue['home_away_calculation'] ?? 'aggregate'),
             'third_place' => isset($validated['third_place']),
             'competition_type' => $competitionType,
             'group_count' => $validated['group_count'],
@@ -1206,7 +1483,48 @@ class TournamentController extends Controller
             ['value' => $valueToSave]
         );
 
-        return back()->with('success', 'Pengaturan Bagan Bracket berhasil disimpan!');
+        $successMessage = 'Pengaturan Bagan Bracket berhasil disimpan!';
+
+        // Jadwal knockout perlu digenerate ulang jika mode laga berubah ATAU
+        // struktur row yang ada tidak sesuai mode (mis. setting sudah
+        // home_away tapi row masih single leg karena tersimpan dari versi
+        // lama). Hanya aman jika belum ada hasil pertandingan.
+        $bracketStages = ['knockout', 'promotion_playoff', 'relegation_playoff'];
+
+        $bracketRows = TournamentMatch::where('tournament_id', $tournament->id)
+            ->whereIn('stage_type', $bracketStages)
+            ->get(['id', 'leg', 'round_name', 'is_third_place', 'is_bye']);
+
+        // Row yang seharusnya 2 leg pada mode home_away (Final/Third Place/bye
+        // tetap single match).
+        $twoLegEligibleRows = $bracketRows->filter(
+            fn ($row) => $row->round_name !== 'Final' && ! $row->is_third_place && ! $row->is_bye
+        );
+
+        $structureMismatch = $validated['match_type'] === 'home_away'
+            ? $twoLegEligibleRows->isNotEmpty() && $twoLegEligibleRows->contains(fn ($row) => $row->leg === null)
+            : $bracketRows->contains(fn ($row) => $row->leg !== null);
+
+        $matchTypeChanged = ($currentValue['match_type'] ?? 'single') !== $validated['match_type'];
+
+        if ($bracketRows->isNotEmpty() && ($matchTypeChanged || $structureMismatch)) {
+            $hasDirtyMatches = TournamentMatch::where('tournament_id', $tournament->id)
+                ->where(function ($query) {
+                    $query->where('status', '!=', 'scheduled')
+                        ->orWhereNotNull('home_score')
+                        ->orWhereNotNull('away_score');
+                })
+                ->exists();
+
+            if ($hasDirtyMatches) {
+                $successMessage .= ' Catatan: jadwal knockout tidak digenerate ulang karena sudah ada hasil pertandingan. Reset jadwal terlebih dahulu untuk menerapkan mode laga baru.';
+            } elseif ($competitionType === 'tournament') {
+                app(MatchGenerator::class)->generateForTournament($tournament);
+                $successMessage = 'Pengaturan Bagan Bracket berhasil disimpan dan jadwal knockout digenerate ulang!';
+            }
+        }
+
+        return back()->with('success', $successMessage);
     }
 
     private function generateDefaultBracketMatches(int $groupCount, array $qualifiedRanks, bool $includeThirdPlace = false): array
@@ -1548,11 +1866,16 @@ class TournamentController extends Controller
     // Halaman Kelola Jadwal & Skor (Admin) — menampilkan semua pertandingan dengan filter dinamis
     public function manageSchedule(Tournament $tournament, Request $request)
     {
-        $matchesQuery = TournamentMatch::with(['events', 'homeTeam.team', 'awayTeam.team'])->where('tournament_id', $tournament->id)
-            ->orderBy('match_date')
-            ->orderBy('stage_type')
+        // Urutan jadwal mengikuti progresi bracket (bracket_match_id naik per
+        // ronde: QF -> SF -> Final), bukan alfabet round_name.
+        $matchesQuery = TournamentMatch::with(['events', 'homeTeam.team', 'homeTeam.players', 'awayTeam.team', 'awayTeam.players'])->where('tournament_id', $tournament->id)
+            ->orderByRaw("FIELD(stage_type, 'group', 'league', 'knockout', 'promotion_playoff', 'relegation_playoff')")
             ->orderBy('group_label')
-            ->orderBy('round_name');
+            ->orderBy('bracket_match_id')
+            ->orderBy('leg')
+            ->orderBy('round_name')
+            ->orderBy('match_date')
+            ->orderBy('id');
 
         $allMatches = $matchesQuery->get();
 
@@ -1564,42 +1887,17 @@ class TournamentController extends Controller
             'playoff_type' => $allMatches->pluck('playoff_type')->filter()->unique()->values()->all(),
         ];
 
+        $tieResolver = app(TieResolver::class);
+        $calculationMode = $tieResolver->calculationMode($tournament);
+
         // Map matches to view-friendly structure
-        $scheduleMatches = $allMatches->map(function ($match) {
-            return [
-                'id' => $match->id,
-                'stage_type' => $match->stage_type,
-                'playoff_type' => $match->playoff_type,
-                'group_label' => $match->group_label,
-                'round_name' => $match->round_name,
-                'round' => $this->buildScheduleLabel($match),
-                'left' => $match->homeTeam?->team?->name ?? $match->source_home ?? $match->home_team_key,
-                'right' => $match->awayTeam?->team?->name ?? $match->source_away ?? $match->away_team_key,
-                'home_team_id' => $match->home_team_id,
-                'away_team_id' => $match->away_team_id,
-                'home_team_key' => $match->home_team_key,
-                'away_team_key' => $match->away_team_key,
-                'source_home' => $match->source_home,
-                'source_away' => $match->source_away,
-                'is_match_ready' => ! is_null($match->home_team_id) && ! is_null($match->away_team_id),
-                'score_left' => $match->home_score,
-                'score_right' => $match->away_score,
-                'datetime' => $match->match_date?->toDateTimeString(),
-                'status' => $match->status ?? 'scheduled',
-                'venue' => $match->venue,
-                'home_roster' => $this->generateLiveMatchRoster('home'),
-                'away_roster' => $this->generateLiveMatchRoster('away'),
-                'events' => $match->events->sortBy('created_at')->map(function ($event) {
-                    return [
-                        'id' => $event->id,
-                        'event_type' => $event->event_type,
-                        'team_side' => $event->team_side,
-                        'player_name' => $event->player_name,
-                        'created_at' => $event->created_at->toDateTimeString(),
-                    ];
-                })->values()->all(),
-            ];
-        })->toArray();
+        $scheduleMatches = $allMatches->map(
+            fn ($match) => $this->buildLoggerMatchPayload($match, $tieResolver, $calculationMode, $allMatches)
+        );
+
+        // Gabungkan pasangan leg jadi satu row tie (jadwal & logger per leg
+        // tetap tersimpan di field 'legs').
+        $scheduleMatches = $this->mergeTieRows($allMatches, $scheduleMatches);
 
         // Build tabs similar to schedule view
         $tabs = $this->buildScheduleTabs($this->resolveBracketSetting($tournament)->value['competition_type'] ?? 'tournament', $allMatches);
@@ -1671,6 +1969,18 @@ class TournamentController extends Controller
             return back()->withErrors(['match_status' => 'Pertandingan yang sudah Full Time tidak dapat dipindahkan kembali ke Live Match melalui menu normal.']);
         }
 
+        if ($match->status === 'penalty_shootout') {
+            return back()->withErrors(['match_status' => 'Pertandingan sedang dalam fase adu penalti. Selesaikan melalui Live Match Event Logger.']);
+        }
+
+        if ($match->leg === 2 && in_array($validated['match_status'], ['live_match', 'full_time'], true)) {
+            $leg1 = app(TieResolver::class)->siblingLeg($match);
+
+            if (! $leg1 || $leg1->status !== 'full_time') {
+                return back()->withErrors(['match_status' => 'Leg 2 tidak dapat dimulai sebelum Leg 1 selesai (Full Time).']);
+            }
+        }
+
         $status = $validated['match_status'];
         if ($match->stage_type === 'group'
             && array_key_exists('home_score', $validated)
@@ -1679,6 +1989,33 @@ class TournamentController extends Controller
             && $validated['away_score'] !== null
         ) {
             $status = 'full_time';
+        }
+
+        // Match penentu babak gugur tidak boleh ditutup seri lewat edit
+        // manual — adu penalti hanya tersedia di Live Match Event Logger.
+        if ($status === 'full_time') {
+            $tieResolver = app(TieResolver::class);
+
+            if ($tieResolver->isDecidingMatch($match)) {
+                $originalHome = $match->home_score;
+                $originalAway = $match->away_score;
+
+                $match->home_score = array_key_exists('home_score', $validated) && $validated['home_score'] !== null
+                    ? (int) $validated['home_score']
+                    : $match->home_score;
+                $match->away_score = array_key_exists('away_score', $validated) && $validated['away_score'] !== null
+                    ? (int) $validated['away_score']
+                    : $match->away_score;
+
+                $outcome = $tieResolver->tieOutcome($match, $tieResolver->calculationMode($tournament));
+
+                $match->home_score = $originalHome;
+                $match->away_score = $originalAway;
+
+                if ($outcome['is_level'] && ! $outcome['pen_decides']) {
+                    return back()->withErrors(['match_status' => 'Hasil seri pada babak gugur harus diselesaikan melalui adu penalti di Live Match Event Logger.']);
+                }
+            }
         }
 
         // TRACE: Before update
@@ -1719,6 +2056,14 @@ class TournamentController extends Controller
             return back()->withErrors(['live_match' => 'Pertandingan belum siap dimainkan karena peserta belum lengkap.']);
         }
 
+        if ($match->leg === 2) {
+            $leg1 = app(TieResolver::class)->siblingLeg($match);
+
+            if (! $leg1 || $leg1->status !== 'full_time') {
+                return back()->withErrors(['live_match' => 'Leg 2 belum dapat dimulai. Selesaikan Leg 1 terlebih dahulu.']);
+            }
+        }
+
         if ($match->status === 'scheduled') {
             $match->update(['status' => 'live_match']);
         }
@@ -1737,24 +2082,66 @@ class TournamentController extends Controller
                 abort(404);
             }
 
+            // Tombol event logger mengirim via fetch (Accept: application/json)
+            // agar modal tidak perlu reload halaman.
+            $fail = function (string $message) use ($request) {
+                if ($request->expectsJson()) {
+                    return response()->json(['message' => $message], 422);
+                }
+
+                return back()->withErrors(['event_logger' => $message]);
+            };
+
             if ($match->stage_type !== 'group' && (is_null($match->home_team_id) || is_null($match->away_team_id))) {
-                return back()->withErrors(['event_logger' => 'Pertandingan belum siap dimainkan.']);
+                return $fail('Pertandingan belum siap dimainkan.');
             }
 
             if ($match->status === 'full_time') {
-                return back()->withErrors(['event_logger' => 'Pertandingan sudah selesai. Event logger hanya dapat dibuka dalam mode read-only.']);
+                return $fail('Pertandingan sudah selesai. Event logger hanya dapat dibuka dalam mode read-only.');
+            }
+
+            if ($match->leg === 2) {
+                $legOne = app(TieResolver::class)->siblingLeg($match);
+
+                if (! $legOne || $legOne->status !== 'full_time') {
+                    return $fail('Leg 2 belum dapat dimulai. Selesaikan Leg 1 terlebih dahulu.');
+                }
             }
 
             $validated = $request->validate([
-                'event_type' => 'required|in:goal,own_goal,yellow_card,red_card,foul,timeout,halftime,full_time',
+                'event_type' => 'required|in:goal,own_goal,yellow_card,red_card,foul,timeout,halftime,full_time,penalty_goal,penalty_miss',
                 'team_side' => 'nullable|in:home,away',
                 'player_name' => 'nullable|string|max:120',
                 'description' => 'nullable|string|max:255',
                 'minute' => 'nullable|integer|min:0|max:120',
             ]);
 
-            if (in_array($validated['event_type'], ['goal', 'own_goal', 'yellow_card', 'red_card', 'foul'], true) && empty($validated['team_side'])) {
-                return back()->withErrors(['team_side' => 'Pilih tim untuk event ini.']);
+            $isPenaltyEvent = in_array($validated['event_type'], ['penalty_goal', 'penalty_miss'], true);
+
+            if ($isPenaltyEvent && $match->status !== 'penalty_shootout') {
+                return $fail('Event penalti hanya bisa dicatat saat fase adu penalti.');
+            }
+
+            if ($match->status === 'penalty_shootout' && ! $isPenaltyEvent) {
+                return $fail('Pertandingan dalam fase adu penalti. Hanya event penalti yang dapat dicatat.');
+            }
+
+            if (in_array($validated['event_type'], ['goal', 'own_goal', 'yellow_card', 'red_card', 'foul', 'penalty_goal', 'penalty_miss'], true) && empty($validated['team_side'])) {
+                return $fail('Pilih tim untuk event ini.');
+            }
+
+            // Pemain yang sudah menerima kartu merah pada match ini nonaktif:
+            // tidak bisa dicatat event apa pun lagi (termasuk penalti).
+            if (! empty($validated['player_name']) && ! empty($validated['team_side'])) {
+                $hasRedCard = MatchEvent::where('match_id', $match->id)
+                    ->where('event_type', 'red_card')
+                    ->where('team_side', $validated['team_side'])
+                    ->where('player_name', $validated['player_name'])
+                    ->exists();
+
+                if ($hasRedCard) {
+                    return $fail('Pemain ini sudah menerima kartu merah dan tidak dapat dicatat event lagi.');
+                }
             }
 
             if ($validated['event_type'] === 'full_time' && ($match->home_score === null || $match->away_score === null)) {
@@ -1766,7 +2153,7 @@ class TournamentController extends Controller
                     'event_payload' => $validated,
                 ]);
 
-                return back()->withErrors(['event_type' => 'Pertandingan tidak bisa diselesaikan tanpa kedua skor terisi.']);
+                return $fail('Pertandingan tidak bisa diselesaikan tanpa kedua skor terisi.');
             }
 
             // TRACE: Before processing event
@@ -1777,7 +2164,9 @@ class TournamentController extends Controller
                 'minute' => $validated['minute'] ?? 0,
             ]);
 
-            DB::transaction(function () use ($match, $validated) {
+            $conclusion = null;
+
+            DB::transaction(function () use ($match, $validated, &$conclusion) {
                 if (in_array($validated['event_type'], ['goal', 'own_goal'], true)) {
                     if ($match->home_score === null) {
                         $match->home_score = 0;
@@ -1785,6 +2174,16 @@ class TournamentController extends Controller
 
                     if ($match->away_score === null) {
                         $match->away_score = 0;
+                    }
+                }
+
+                if (in_array($validated['event_type'], ['penalty_goal', 'penalty_miss'], true)) {
+                    if ($match->home_penalty_score === null) {
+                        $match->home_penalty_score = 0;
+                    }
+
+                    if ($match->away_penalty_score === null) {
+                        $match->away_penalty_score = 0;
                     }
                 }
 
@@ -1804,6 +2203,14 @@ class TournamentController extends Controller
                     }
                 }
 
+                if ($validated['event_type'] === 'penalty_goal') {
+                    if ($validated['team_side'] === 'home') {
+                        $match->home_penalty_score += 1;
+                    } else {
+                        $match->away_penalty_score += 1;
+                    }
+                }
+
                 if ($validated['event_type'] === 'full_time') {
                     if ($match->home_score === null || $match->away_score === null) {
                         Log::warning('Runtime finalize attempted but scores missing', [
@@ -1816,10 +2223,20 @@ class TournamentController extends Controller
 
                         throw new \RuntimeException('Tidak dapat menyelesaikan pertandingan tanpa kedua skor terisi.');
                     }
-                    $match->status = 'full_time';
-                }
 
-                $match->save();
+                    // Jalur penutupan yang sama dengan tombol End Match agar
+                    // match penentu babak gugur yang seri tidak bisa lolos
+                    // tanpa adu penalti.
+                    $conclusion = $this->concludeMatch($match);
+
+                    if ($conclusion !== 'full_time') {
+                        // Pertandingan belum benar-benar berakhir; jangan
+                        // catat event full_time.
+                        return;
+                    }
+                } else {
+                    $match->save();
+                }
 
                 MatchEvent::create([
                     'match_id' => $match->id,
@@ -1829,17 +2246,47 @@ class TournamentController extends Controller
                     'description' => $validated['description'] ?? null,
                     'minute' => $validated['minute'] ?? 0,
                 ]);
-
-                if ($validated['event_type'] === 'full_time') {
-                    $match->refresh();
-                    $this->finalizeMatchResult($match);
-                }
             });
 
             // TRACE: After event stored
             MatchTimelineTracer::logWithEvent($match->id, 'storeMatchEvent:after', [
                 'event_type' => $validated['event_type'],
             ]);
+
+            if ($request->expectsJson()) {
+                $match->refresh();
+                $match->load(['events', 'homeTeam.team', 'homeTeam.players', 'awayTeam.team', 'awayTeam.players']);
+                $tieResolver = app(TieResolver::class);
+
+                return response()->json([
+                    'message' => $conclusion === 'penalty_shootout'
+                        ? 'Hasil imbang — adu penalti dimulai.'
+                        : 'Event pertandingan disimpan.',
+                    'match' => $this->buildLoggerMatchPayload(
+                        $match,
+                        $tieResolver,
+                        $tieResolver->calculationMode($tournament)
+                    ),
+                ]);
+            }
+
+            if ($conclusion === 'penalty_shootout') {
+                return back()->with([
+                    'success' => 'Hasil imbang — adu penalti dimulai. Tekan tombol penalti pada pemain penendang.',
+                    'open_live_match' => $match->id,
+                ]);
+            }
+
+            if ($conclusion === 'full_time') {
+                $legTwo = $this->openSecondLegAfter($match);
+
+                if ($legTwo) {
+                    return back()->with([
+                        'success' => 'Leg 1 selesai. Papan skor beralih ke Leg 2 — posisi home/away ditukar.',
+                        'open_live_match' => $legTwo->id,
+                    ]);
+                }
+            }
 
             return back()->with([
                 'success' => 'Event pertandingan disimpan.',
@@ -1871,43 +2318,121 @@ class TournamentController extends Controller
             // RACE CONDITION FIX: Refresh and treat NULL scores as 0 (0-0 is valid match)
             $match->refresh();
 
-            $homeScore = $match->home_score ?? 0;
-            $awayScore = $match->away_score ?? 0;
-
             // TRACE: Before ending match
             MatchTimelineTracer::log($match->id, 'endMatch:before', [
                 'current_status' => $match->status,
-                'home_score' => $homeScore,
-                'away_score' => $awayScore,
+                'home_score' => $match->home_score ?? 0,
+                'away_score' => $match->away_score ?? 0,
             ]);
 
-            DB::transaction(function () use ($match, $homeScore, $awayScore) {
-                // Ensure scores are set in database (NULL treated as 0)
-                if ($match->home_score === null || $match->away_score === null) {
-                    $match->update([
-                        'home_score' => $homeScore,
-                        'away_score' => $awayScore,
-                        'status' => 'full_time',
-                    ]);
-                } else {
-                    // Scores already set, just update status
-                    $match->update(['status' => 'full_time']);
-                }
+            $conclusion = null;
+
+            DB::transaction(function () use ($match, &$conclusion) {
+                $conclusion = $this->concludeMatch($match);
 
                 // TRACE: After setting status
                 MatchTimelineTracer::log($match->id, 'endMatch:after_status_set', [
-                    'home_score' => $homeScore,
-                    'away_score' => $awayScore,
+                    'conclusion' => $conclusion,
+                    'home_score' => $match->home_score,
+                    'away_score' => $match->away_score,
                 ]);
-
-                $this->finalizeMatchResult($match);
             });
+
+            if ($conclusion === 'penalty_level') {
+                return back()
+                    ->with('open_live_match', $match->id)
+                    ->withErrors(['end_match' => 'Skor adu penalti masih seri. Lanjutkan tendangan penalti.']);
+            }
+
+            if ($conclusion === 'penalty_shootout') {
+                return back()->with([
+                    'success' => 'Hasil imbang — adu penalti dimulai. Tekan tombol penalti pada pemain penendang.',
+                    'open_live_match' => $match->id,
+                ]);
+            }
+
+            $legTwo = $this->openSecondLegAfter($match);
+
+            if ($legTwo) {
+                return back()->with([
+                    'success' => 'Leg 1 selesai. Papan skor beralih ke Leg 2 — posisi home/away ditukar.',
+                    'open_live_match' => $legTwo->id,
+                ]);
+            }
 
             return back()->with([
                 'success' => 'Pertandingan berhasil diselesaikan dan di-finalisasi.',
                 'open_live_match' => $match->id,
             ]);
         });
+    }
+
+    /**
+     * Setelah Leg 1 ditutup, alihkan logger ke Leg 2 pada tie yang sama:
+     * status Leg 2 dinaikkan ke live_match dan modal dibuka untuknya
+     * (home/away sudah dibalik sejak generasi jadwal).
+     */
+    private function openSecondLegAfter(TournamentMatch $legOne): ?TournamentMatch
+    {
+        if ($legOne->leg !== 1) {
+            return null;
+        }
+
+        $legTwo = app(TieResolver::class)->siblingLeg($legOne);
+
+        if (! $legTwo || ! in_array($legTwo->status, ['scheduled', 'live_match'], true)) {
+            return null;
+        }
+
+        if ($legTwo->status === 'scheduled') {
+            $legTwo->update(['status' => 'live_match']);
+        }
+
+        return $legTwo;
+    }
+
+    /**
+     * Tutup pertandingan dari status live_match/penalty_shootout.
+     *
+     * Match penentu babak gugur (leg 2, atau single leg termasuk Final) yang
+     * berakhir seri menurut mode kalkulasi tidak langsung full_time, melainkan
+     * masuk fase adu penalti. Return:
+     * - 'full_time'        => pertandingan selesai dan difinalisasi
+     * - 'penalty_shootout' => fase adu penalti dimulai
+     * - 'penalty_level'    => skor penalti masih seri, belum bisa ditutup
+     */
+    private function concludeMatch(TournamentMatch $match): string
+    {
+        $tieResolver = app(TieResolver::class);
+
+        if ($match->status === 'penalty_shootout') {
+            if (($match->home_penalty_score ?? 0) === ($match->away_penalty_score ?? 0)) {
+                return 'penalty_level';
+            }
+
+            $match->status = 'full_time';
+            $match->save();
+            $this->finalizeMatchResult($match);
+
+            return 'full_time';
+        }
+
+        // NULL diperlakukan sebagai 0 (0-0 adalah hasil yang valid)
+        $match->home_score = $match->home_score ?? 0;
+        $match->away_score = $match->away_score ?? 0;
+
+        if ($tieResolver->needsPenaltyShootout($match, $tieResolver->calculationMode($match->tournament))) {
+            $match->status = 'penalty_shootout';
+            $match->save();
+
+            return 'penalty_shootout';
+        }
+
+        $match->status = 'full_time';
+        $match->save();
+        $this->finalizeMatchResult($match);
+
+        return 'full_time';
     }
 
     private function finalizeMatchResult(TournamentMatch $match)
@@ -1929,43 +2454,86 @@ class TournamentController extends Controller
 
     private function updateBracketForTournament(TournamentMatch $match): void
     {
-        if (! $match->next_match_id) {
+        if (! $match->next_bracket_match_id && ! $match->next_match_id) {
             return;
         }
 
-        $nextMatch = TournamentMatch::find($match->next_match_id);
-        if (! $nextMatch) {
+        $tieResolver = app(TieResolver::class);
+
+        // Hanya match penentu tie (leg 2 atau single leg) yang meneruskan
+        // pemenang ke babak berikutnya; leg 1 tidak pernah menentukan.
+        if (! $tieResolver->isDecidingMatch($match)) {
             return;
         }
 
-        $winnerTeamId = null;
-        $winnerName = null;
+        $outcome = $tieResolver->tieOutcome($match, $tieResolver->calculationMode($match->tournament));
 
-        if ($match->home_score > $match->away_score) {
-            $winnerTeamId = $match->home_team_id;
-            $winnerName = $match->homeTeam?->team?->name ?? $match->home_team_key ?? $match->source_home;
-        } elseif ($match->away_score > $match->home_score) {
-            $winnerTeamId = $match->away_team_id;
-            $winnerName = $match->awayTeam?->team?->name ?? $match->away_team_key ?? $match->source_away;
-        }
-
-        if ($winnerTeamId === null || $winnerName === null) {
+        if (! $outcome['both_played']) {
             return;
         }
 
-        if (is_null($nextMatch->home_team_id)) {
-            $nextMatch->home_team_id = $winnerTeamId;
-            $nextMatch->home_team_key = $winnerName;
-            $nextMatch->source_home = $winnerName;
-            $nextMatch->save();
+        $winner = $tieResolver->winnerDescriptor($match, $outcome);
+
+        if ($winner === null) {
             return;
         }
 
-        if (is_null($nextMatch->away_team_id)) {
-            $nextMatch->away_team_id = $winnerTeamId;
-            $nextMatch->away_team_key = $winnerName;
-            $nextMatch->source_away = $winnerName;
-            $nextMatch->save();
+        // Ambil SEMUA row tie berikutnya: 1 row (single/Final) atau 2 row
+        // (tie dua leg) — pemenang harus mengisi kedua leg sekaligus, dengan
+        // posisi home/away yang sudah dibalik antar leg sejak generasi.
+        $nextRows = collect();
+
+        if ($match->next_bracket_match_id !== null) {
+            $nextRows = TournamentMatch::where('tournament_id', $match->tournament_id)
+                ->where('stage_type', $match->stage_type)
+                ->where('bracket_match_id', $match->next_bracket_match_id)
+                ->get();
+        }
+
+        if ($nextRows->isEmpty() && $match->next_match_id) {
+            $nextRows = TournamentMatch::where('id', $match->next_match_id)->get();
+        }
+
+        $label = 'Pemenang M' . $match->bracket_match_id;
+
+        foreach ($nextRows as $row) {
+            $assigned = false;
+
+            // source_home/source_away menyimpan label "Pemenang M{id}" dari
+            // struktur bracket dan sengaja tidak ditimpa: label ini yang
+            // membuat penempatan idempoten saat hasil dikoreksi/difinalisasi
+            // ulang.
+            if ($row->source_home === $label) {
+                $row->home_team_id = $winner['team_id'];
+                $row->home_team_key = $winner['name'];
+                $assigned = true;
+            }
+
+            if ($row->source_away === $label) {
+                $row->away_team_id = $winner['team_id'];
+                $row->away_team_key = $winner['name'];
+                $assigned = true;
+            }
+
+            // Fallback bracket custom (label tidak dikenal): slot kosong
+            // pertama, perilaku lama.
+            if (! $assigned) {
+                if (is_null($row->home_team_id)) {
+                    $row->home_team_id = $winner['team_id'];
+                    $row->home_team_key = $winner['name'];
+                    $row->source_home = $winner['name'];
+                    $assigned = true;
+                } elseif (is_null($row->away_team_id)) {
+                    $row->away_team_id = $winner['team_id'];
+                    $row->away_team_key = $winner['name'];
+                    $row->source_away = $winner['name'];
+                    $assigned = true;
+                }
+            }
+
+            if ($assigned) {
+                $row->save();
+            }
         }
     }
 

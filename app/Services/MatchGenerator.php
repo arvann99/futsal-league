@@ -122,7 +122,13 @@ class MatchGenerator
             return [];
         }
 
-        $rows = $this->buildBracketMatchesFromArray($tournament, $structure, 'knockout', null);
+        $rows = $this->buildBracketMatchesFromArray(
+            $tournament,
+            $structure,
+            'knockout',
+            null,
+            $bracketValue['match_type'] ?? 'single'
+        );
 
         $teamIdByName = [];
         foreach ($teams as $team) {
@@ -162,7 +168,8 @@ class MatchGenerator
             $tournament,
             $bracketValue['matches'] ?? [],
             'knockout',
-            null
+            null,
+            $bracketValue['match_type'] ?? 'single'
         );
 
         if (empty($matches)) {
@@ -215,6 +222,7 @@ class MatchGenerator
     private function buildPlayoffMatches(Tournament $tournament, array $bracketValue, string $playoffType): array
     {
         $stageType = $playoffType === 'promotion' ? 'promotion_playoff' : 'relegation_playoff';
+        $matchType = $bracketValue['match_type'] ?? 'single';
         $matches = [];
 
         if ($playoffType === 'promotion' && isset($bracketValue['matches_promotion'])) {
@@ -222,53 +230,83 @@ class MatchGenerator
                 $tournament,
                 $bracketValue['matches_promotion'],
                 $stageType,
-                'promotion'
+                'promotion',
+                $matchType
             );
         } elseif ($playoffType === 'relegation' && isset($bracketValue['matches_relegation'])) {
             $matches = $this->buildBracketMatchesFromArray(
                 $tournament,
                 $bracketValue['matches_relegation'],
                 $stageType,
-                'relegation'
+                'relegation',
+                $matchType
             );
         } elseif (isset($bracketValue['matches'])) {
             $matches = $this->buildBracketMatchesFromArray(
                 $tournament,
                 $bracketValue['matches'],
                 $stageType,
-                $playoffType
+                $playoffType,
+                $matchType
             );
         }
 
         return $matches;
     }
 
-    private function buildBracketMatchesFromArray(Tournament $tournament, array $bracketMatches, string $stageType, ?string $playoffType, array $extra = []): array
+    private function buildBracketMatchesFromArray(Tournament $tournament, array $bracketMatches, string $stageType, ?string $playoffType, string $matchType = 'single', array $extra = []): array
     {
         $rows = [];
         $now = Carbon::now();
 
         foreach ($bracketMatches as $match) {
-            $rows[] = [
+            $isBye = isset($match['is_bye']) ? (bool) $match['is_bye'] : false;
+            $isThirdPlace = isset($match['is_third_place']) ? (bool) $match['is_third_place'] : false;
+            $round = $match['round'] ?? 'Bracket';
+
+            $baseRow = [
                 'tournament_id' => $tournament->id,
                 'bracket_match_id' => isset($match['id']) ? (int) $match['id'] : null,
                 'next_bracket_match_id' => isset($match['next_match_id']) ? $match['next_match_id'] : null,
                 'stage_type' => $stageType,
                 'playoff_type' => $playoffType,
                 'group_label' => null,
-                'round_name' => $match['round'] ?? 'Bracket',
+                'round_name' => $round,
                 'home_team_id' => null,
                 'away_team_id' => null,
                 'home_team_key' => $match['left'] ?? null,
                 'away_team_key' => $match['right'] ?? null,
                 'source_home' => $match['left'] ?? null,
                 'source_away' => $match['right'] ?? null,
-                'is_bye' => isset($match['is_bye']) ? (bool) $match['is_bye'] : false,
-                'is_third_place' => isset($match['is_third_place']) ? (bool) $match['is_third_place'] : false,
+                'is_bye' => $isBye,
+                'is_third_place' => $isThirdPlace,
+                'leg' => null,
                 'status' => 'scheduled',
                 'created_at' => $now,
                 'updated_at' => $now,
             ];
+
+            // Mode Home & Away: dua leg per tie, kecuali Final dan Third Place
+            // yang tetap satu pertandingan. Leg 2 dimainkan dengan home/away
+            // dibalik.
+            $isTwoLeg = $matchType === 'home_away'
+                && $round !== 'Final'
+                && ! $isThirdPlace
+                && ! $isBye;
+
+            if (! $isTwoLeg) {
+                $rows[] = $baseRow;
+                continue;
+            }
+
+            $rows[] = array_merge($baseRow, ['leg' => 1]);
+            $rows[] = array_merge($baseRow, [
+                'leg' => 2,
+                'home_team_key' => $match['right'] ?? null,
+                'away_team_key' => $match['left'] ?? null,
+                'source_home' => $match['right'] ?? null,
+                'source_away' => $match['left'] ?? null,
+            ]);
         }
 
         return $rows;
@@ -308,6 +346,7 @@ class MatchGenerator
                     'source_away' => $awayTeamKey,
                     'is_bye' => $match['is_bye'],
                     'is_third_place' => false,
+                    'leg' => null,
                     'status' => 'scheduled',
                     'created_at' => $now,
                     'updated_at' => $now,
@@ -565,16 +604,27 @@ class MatchGenerator
             ->whereNotNull('next_bracket_match_id')
             ->get();
 
+        // Mapping per stage_type, dan hanya row "entry point" tie (single
+        // match atau leg 1) — pada mode Home & Away satu bracket_match_id
+        // punya dua row sehingga pluck biasa akan bentrok. next_match_id
+        // dipakai untuk navigasi bracket; advancement pemenang memakai
+        // next_bracket_match_id agar bisa mengisi kedua leg tie berikutnya.
         $mapping = TournamentMatch::where('tournament_id', $tournament->id)
             ->whereNotNull('bracket_match_id')
+            ->where(function ($query) {
+                $query->whereNull('leg')->orWhere('leg', 1);
+            })
             ->get()
-            ->pluck('id', 'bracket_match_id')
+            ->mapWithKeys(fn ($match) => [
+                $match->stage_type . '#' . $match->bracket_match_id => $match->id,
+            ])
             ->toArray();
 
         foreach ($matches as $match) {
             $nextBracketId = $match->next_bracket_match_id;
-            if ($nextBracketId !== null && isset($mapping[$nextBracketId])) {
-                $match->next_match_id = $mapping[$nextBracketId];
+            $mappingKey = $match->stage_type . '#' . $nextBracketId;
+            if ($nextBracketId !== null && isset($mapping[$mappingKey])) {
+                $match->next_match_id = $mapping[$mappingKey];
                 $match->save();
             }
         }

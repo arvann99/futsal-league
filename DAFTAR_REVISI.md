@@ -4,7 +4,7 @@
 >
 > Format: setiap item punya ID (R1–R22) supaya mudah dirujuk, misalnya: *"kerjakan R6"*.
 
-**Progress: 0 / 22 selesai**
+**Progress: 8 / 22 selesai** *(update 12 Juni 2026: R1, R2, R4, R6, R7, R8, R9, R10 — lihat juga daftar "Selesai di luar daftar" di bawah)*
 
 ---
 
@@ -40,9 +40,9 @@
   - Samakan urutan default tiebreaker yang beda antara `pointsSettings()` (±375) dan `resolvePointSettings()` (±2360)
   - 📁 `app/Http/Controllers/TournamentController.php`
 
-- [ ] **R4 — Bracket saat tipe Liga: halaman kosong / menu tetap tampil** `[BUG/UX]`
+- [x] **R4 — Bracket saat tipe Liga: halaman kosong / menu tetap tampil** `[BUG/UX]` *(selesai 11 Juni 2026)*
   - Menu "Bagan Bracket" tetap muncul untuk tipe `league` tapi halamannya kosong
-  - Putuskan: sembunyikan menu, atau tampilkan pesan informatif
+  - ✔️ Diselesaikan bersamaan pemisahan 3 sistem kompetisi: tipe `league` menyembunyikan menu Bracket Gugur di sidebar dan `bracketAdmin()` redirect ke klasemen
   - 📁 `resources/views/tournaments/manage.blade.php` (±55) • `TournamentController.php` → `bracketAdmin()` (±604–614)
 
 - [ ] **R5 — QA Liga Reguler dengan Playoff** `[PENGECEKAN]`
@@ -54,47 +54,47 @@
 
 ## B. Mekanik Pertandingan Knockout (engine inti)
 
-- [ ] **R6 — Jika imbang di knockout → adu penalti, pemenang +1 gol** `[FITUR BARU — KRITIS]`
+- [x] **R6 — Jika imbang di knockout → adu penalti, pemenang +1 gol** `[FITUR BARU — KRITIS]` *(selesai 11–12 Juni 2026)*
   - Berlaku di: Kelola Jadwal & Skor, bracket gugur, dan Live Match
-  - Aturan: siapapun menang adu penalti, **skor hanya bertambah +1** (bukan skor penalti penuh)
-  - Saat ini skor seri membuat bracket macet — pemenang tidak pernah maju
+  - ✔️ Match knockout (termasuk Final, single leg maupun leg 2) yang seri masuk status `penalty_shootout`; tombol pemain berubah jadi "Penalti Gol / Penalti Gagal"; End Match ditolak selama skor penalti seri; pemenang otomatis maju ke babak berikut
+  - ⚠️ Deviasi dari rencana awal: skor utama TIDAK ditambah +1 — skor penalti disimpan terpisah (`home/away_penalty_score`) dan ditampilkan sebagai "2 (4) - (3) 2" (lebih informatif); edit manual hasil seri di knockout diblokir (harus via logger)
   - Sub-tugas:
-    - [ ] Tambah field penalti di tabel `matches` (migration)
-    - [ ] Event type penalti di `storeMatchEvent()` (±1758) + UI Live Match Logger
-    - [ ] Validasi di `endMatch()` (±1860): match knockout tidak boleh selesai imbang
-    - [ ] Perbaiki `updateBracketForTournament()` (±1939): pemenang penalti maju ke babak berikut
-  - 📁 `app/Http/Controllers/TournamentController.php` • `database/migrations/` • `resources/views/tournaments/schedule-admin.blade.php`
+    - [x] Tambah field penalti di tabel `matches` (migration `add_home_away_support_to_matches_table`)
+    - [x] Event type penalti (`penalty_goal`/`penalty_miss`) di `storeMatchEvent()` + UI Live Match Logger
+    - [x] Validasi di `endMatch()` via helper `concludeMatch()`: match knockout tidak boleh selesai imbang
+    - [x] `updateBracketForTournament()` di-redesign: pemenang (termasuk via penalti) maju berbasis label `Pemenang M{id}`
+  - 📁 `app/Http/Controllers/TournamentController.php` • `app/Services/TieResolver.php` (baru) • `database/migrations/` • `resources/views/admin/tournaments/schedule/manage.blade.php`
 
-- [ ] **R7 — Leg ke-2 di Kelola Jadwal & Skor (Home & Away)** `[FITUR BARU]`
-  - Opsi `match_type=home_away` sudah ada di UI tapi belum berfungsi — generate 2 leg per pasangan
+- [x] **R7 — Leg ke-2 di Kelola Jadwal & Skor (Home & Away)** `[FITUR BARU]` *(selesai 11–12 Juni 2026)*
+  - Opsi `match_type=home_away` kini berfungsi — 2 leg per pasangan, home/away dibalik di Leg 2 (lineup ikut bertukar)
+  - ✔️ Final & Third Place tetap single match; Leg 2 terkunci sampai Leg 1 Full Time; End Match Leg 1 otomatis beralih ke Leg 2; ganti mode di pengaturan auto-regenerate jadwal (selama belum ada hasil)
   - Sub-tugas:
-    - [ ] Kolom `leg_number` / penanda pasangan leg di tabel `matches`
-    - [ ] Generate leg 2 di `MatchGenerator::buildBracketMatchesFromArray()` (±267)
-    - [ ] Tampilan Leg 1 / Leg 2 di Kelola Jadwal & Skor
-  - 📁 `app/Services/MatchGenerator.php` • `resources/views/tournaments/partials/bracket-settings-panel.blade.php` (±102)
+    - [x] Kolom `leg` di tabel `matches` (null = single; pasangan leg digrup via `bracket_match_id`)
+    - [x] Generate leg 2 di `MatchGenerator::buildBracketMatchesFromArray()`
+    - [x] Tampilan di Kelola Jadwal & Skor: **satu row per tie** dengan 2 jadwal (tanggal/jam per leg), skor per leg + agregat, dan **tab Leg 1 / Leg 2** di Live Match Logger
+  - 📁 `app/Services/MatchGenerator.php` • `app/Services/TieResolver.php` • `resources/views/admin/tournaments/settings/partials/bracket-settings-panel.blade.php` • `schedule/partials/match-table.blade.php` • `schedule/manage.blade.php`
 
-- [ ] **R8 — Dropdown aturan pemenang 2 leg: Agregat / Win per Match** `[FITUR BARU]`
-  - Opsi 1: **By agregat gol**
-  - Opsi 2: **Win per match** — jika 1-1 match: extra time di leg 2 (gol ET = +1 skor), masih imbang → adu penalti (pemenang +1 gol)
-  - Bergantung pada: R6 dan R7
-  - 📁 Panel bracket settings + `TournamentController.php` → `finalizeMatchResult()` (±1922)
+- [x] **R8 — Dropdown aturan pemenang 2 leg: Agregat / Win per Match** `[FITUR BARU]` *(selesai 11 Juni 2026)*
+  - ✔️ Radio sub-opsi muncul saat Home & Away dipilih: **Agregat Skor** (total gol kedua leg) / **Jumlah Kemenangan** (menang per leg), tersimpan sebagai `home_away_calculation` di bracket settings
+  - ✔️ Seri menurut mode terpilih setelah Leg 2 → langsung adu penalti (tanpa aturan gol tandang); gol extra time dicatat sebagai gol biasa Leg 2 sebelum End Match (tanpa fase ET eksplisit); pemenang penalti pakai skor penalti terpisah (bukan +1 gol — lihat catatan R6)
+  - 📁 `bracket-settings-panel.blade.php` • `TournamentController.php` → `updateBracketSettings()` / `concludeMatch()` • `app/Services/TieResolver.php` → `tieOutcome()`
 
-- [ ] **R9 — Mode knockout: bye / single match otomatis maju** `[FITUR BARU]`
-  - Tim dengan slot Bye atau tanpa lawan otomatis lolos ke babak selanjutnya tanpa input skor manual
+- [x] **R9 — Mode knockout: bye / single match otomatis maju** `[FITUR BARU]` *(selesai 11 Juni 2026)*
+  - ✔️ Tim ber-bye tidak lagi membuat card/match — namanya langsung dipromosikan sebagai peserta card ronde berikutnya saat generate (`buildBracketStructure()`), team_id ikut terpasang otomatis; berlaku juga di mode Home & Away (bye tidak menghasilkan leg)
+  - Teruji: 3 tim → seed 1 langsung ke Final, seed 2 vs 3 di Semifinal
   - 📁 `app/Services/MatchGenerator.php` • `TournamentController.php` → `updateBracketForTournament()`
 
 ---
 
 ## C. Format Kompetisi
 
-- [ ] **R10 — Tipe kompetisi baru: Knockout langsung (bracket gugur tanpa fase grup)** `[FITUR BARU]`
-  - Tambah pilihan `knockout` di samping tournament / league / league_playoff
+- [x] **R10 — Tipe kompetisi baru: Knockout langsung (bracket gugur tanpa fase grup)** `[FITUR BARU]` *(selesai 11 Juni 2026)*
+  - ✔️ Diimplementasikan dengan memisahkan 3 sistem kompetisi (bukan menambah tipe ke-4): tipe `tournament` = **gugur murni tanpa fase grup** — bracket dibuat otomatis dari tim `verification_status=approved` (`MatchGenerator::buildKnockoutMatchesFromTeams()`), team_id langsung terpasang, struktur disinkron ke bracket settings; `league` = klasemen saja; `league_playoff` = keduanya
   - Sub-tugas:
-    - [ ] Radio pilihan di `group-settings-panel.blade.php` (±61–73)
-    - [ ] Validasi `competition_type` di `updateSettings()` (±1323)
-    - [ ] Cabang generate di `MatchGenerator::generateForTournament()` (±26)
-    - [ ] Switch view jadwal (±223–227)
-  - 📁 `TournamentController.php` • `MatchGenerator.php` • `group-settings-panel.blade.php`
+    - [x] Pilihan tipe di panel pengaturan + validasi `competition_type`
+    - [x] Cabang generate di `MatchGenerator::generateForTournament()`
+    - [x] Switch view jadwal + sidebar menu kondisional per tipe
+  - 📁 `TournamentController.php` • `MatchGenerator.php` • `group-settings-panel.blade.php` • partial sidebar
 
 - [ ] **R11 — Liga: pilihan Setengah Kompetisi vs Kompetisi Penuh (kandang-tandang)** `[FITUR BARU]`
   - Saat ini hanya single round robin; opsi penuh menggandakan jumlah match di Kelola Jadwal & Skor
@@ -148,9 +148,11 @@
     - [ ] Card tim menampilkan list pemain
   - 📁 `app/Http/Controllers/OfficialPlayerController.php` • `OfficialTeamOfficialController.php` • `participants/index.blade.php` (±59)
 
-- [ ] **R19 — Live Match terhubung card pemain tim** `[FITUR BARU]`
-  - Roster Live Match Logger masih dummy hardcode (`generateLiveMatchRoster()` ±315–330) — ganti dengan pemain asli
-  - Tambah relasi `player_id` di `match_events`, lalu akumulasi statistik (gol/kartu) ke card pemain
+- [ ] **R19 — Live Match terhubung card pemain tim** `[FITUR BARU]` `[SEBAGIAN — 12 Juni 2026]`
+  - Sub-tugas:
+    - [x] Roster Live Match Logger dari pemain asli (`buildMatchRoster()` membaca `tournament_team_players`: filter aktif, urut nomor punggung, tanda kapten; fallback kartu tim bila roster kosong; lineup otomatis bertukar sisi di Leg 2)
+    - [ ] Tambah relasi `player_id` di `match_events` (saat ini masih `player_name` string)
+    - [ ] Akumulasi statistik (gol/kartu) ke card pemain di halaman peserta
   - 📁 `TournamentController.php` • `app/Models/MatchEvent.php` • migration `match_events`
 
 - [ ] **R20 — Sistem manager view jadwal** `[QA/PENYEMPURNAAN]`
@@ -180,16 +182,34 @@
 
 ---
 
+## ➕ Selesai di luar daftar (11–12 Juni 2026)
+
+Perbaikan/fitur yang dikerjakan menyertai R6–R10 tapi tidak ada di daftar asli:
+
+- [x] **Urutan jadwal mengikuti progresi bracket** (QF → SF → Final) — sebelumnya terurut alfabetis sehingga Final tampil paling atas
+- [x] **Satu row jadwal per tie Home & Away** dengan 2 jadwal (tanggal/jam per leg), skor per leg + agregat, dan panel edit berisi form per leg
+- [x] **Tab Leg 1 / Leg 2 di Live Match Logger** — tab Leg 2 terkunci sampai Leg 1 selesai; End Match Leg 1 otomatis pindah ke tab Leg 2
+- [x] **Event logger tanpa reload halaman** — goal/own goal/kartu/penalti dikirim via fetch, scoreboard & timeline dirender ulang dari respons JSON; error guard tampil sebagai banner di dalam modal
+- [x] **Tanda kartu kuning/merah** — badge 🟨/🟥 di kartu pemain + rekap per tim di scoreboard; **pemain kartu merah otomatis nonaktif** (semua tombol event disabled + guard server menolak event untuk pemain tersebut)
+- [x] **Fix scroll modal logger** — lineup & timeline scroll internal (scoreboard/timeline tetap terlihat), scroll halaman belakang terkunci saat modal terbuka
+- [x] **Seeder pemain** — `php artisan db:seed --class=TournamentTeamPlayerSeeder` (11 pemain futsal/tim: 2 GK, 3 Anchor, 4 Flank, 2 Pivot, kapten #10; tim yang sudah punya pemain dilewati)
+- [x] **Guard edit manual** — Leg 2 sebelum Leg 1 selesai, match dalam fase adu penalti, dan menutup match knockout dengan hasil seri lewat edit manual: semuanya ditolak
+- [x] **Regenerasi jadwal cerdas** di simpan pengaturan bracket — terpicu saat mode laga berubah ATAU struktur row tidak cocok dengan mode; ditolak dengan peringatan bila sudah ada hasil pertandingan
+
+---
+
 ## 🔢 Usulan Urutan Pengerjaan
 
-| Tahap | Item | Alasan |
-|-------|------|--------|
-| 1 | R3 → R1 → R2 → R4 | Bug cepat & berdampak luas |
-| 2 | R6 → R9 → R7 → R8 | Engine knockout (R6 paling kritis: bracket macet saat seri) |
-| 3 | R10 → R11 → R12 → R13 → R5 | Format kompetisi & klasemen |
-| 4 | R14 → R15 → R16 → R17 | Peserta, grup & undian |
-| 5 | R18 → R19 → R20 | Verifikasi & pemain |
-| 6 | R21 → R22 | Platform (menyentuh auth & seluruh data) |
+| Tahap | Item | Alasan | Status |
+|-------|------|--------|--------|
+| 1 | R3 → R1 → R2 → R4 | Bug cepat & berdampak luas | ⏳ Sisa **R3** (poin kalah) |
+| 2 | R6 → R9 → R7 → R8 | Engine knockout (R6 paling kritis: bracket macet saat seri) | ✅ Selesai semua |
+| 3 | R10 → R11 → R12 → R13 → R5 | Format kompetisi & klasemen | ⏳ R10 selesai; sisa R11, R12, R13, R5 |
+| 4 | R14 → R15 → R16 → R17 | Peserta, grup & undian | ⬜ Belum |
+| 5 | R18 → R19 → R20 | Verifikasi & pemain | ⏳ R19 sebagian (roster asli) |
+| 6 | R21 → R22 | Platform (menyentuh auth & seluruh data) | ⬜ Belum |
+
+> **Rekomendasi berikutnya:** R3 (bug poin kalah — cepat dan berdampak ke semua klasemen), lalu lanjut sisa Tahap 3.
 
 ---
 

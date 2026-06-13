@@ -110,6 +110,22 @@
                         <input type="radio" name="match_type" value="home_away" class="text-fuchsia-500 focus:ring-fuchsia-400" {{ old('match_type', $setting->value['match_type'] ?? 'single') === 'home_away' ? 'checked' : '' }}>
                         <span class="text-sm text-slate-200">Home & Away (leg pulang-pergi)</span>
                     </label>
+                    @php
+                        $homeAwayCalculation = old('home_away_calculation', $setting->value['home_away_calculation'] ?? 'aggregate');
+                        $isHomeAway = old('match_type', $setting->value['match_type'] ?? 'single') === 'home_away';
+                    @endphp
+                    <div id="homeAwayCalcOptions" class="ml-6 space-y-2 border-l-2 border-slate-700 pl-4 {{ $isHomeAway ? '' : 'hidden' }}">
+                        <p class="text-xs uppercase tracking-[0.24em] text-slate-500">Penentuan Pemenang Tie</p>
+                        <label class="flex items-center gap-3 p-3 bg-slate-800 rounded-xl cursor-pointer">
+                            <input type="radio" name="home_away_calculation" value="aggregate" class="text-fuchsia-500 focus:ring-fuchsia-400" {{ $homeAwayCalculation === 'aggregate' ? 'checked' : '' }}>
+                            <span class="text-sm text-slate-200">Agregat Skor <span class="text-slate-400">— pemenang dari total gol kedua leg</span></span>
+                        </label>
+                        <label class="flex items-center gap-3 p-3 bg-slate-800 rounded-xl cursor-pointer">
+                            <input type="radio" name="home_away_calculation" value="wins" class="text-fuchsia-500 focus:ring-fuchsia-400" {{ $homeAwayCalculation === 'wins' ? 'checked' : '' }}>
+                            <span class="text-sm text-slate-200">Jumlah Kemenangan <span class="text-slate-400">— pemenang dari jumlah leg yang dimenangkan</span></span>
+                        </label>
+                        <p class="text-xs text-slate-400">Jika hasil tetap seri setelah leg kedua, pemenang ditentukan melalui adu penalti (tanpa aturan gol tandang). Final dan perebutan tempat ketiga tetap satu pertandingan.</p>
+                    </div>
                     <label class="flex flex-col gap-3 p-4 bg-slate-800 rounded-xl cursor-pointer">
                         <div class="flex items-center gap-3">
                             <input type="checkbox" name="third_place" value="1" class="text-fuchsia-500 focus:ring-fuchsia-400" {{ $hasThirdPlace ? 'checked' : '' }}>
@@ -520,9 +536,25 @@
     panel.classList.remove('hidden');
 }
 
+    function updateHomeAwayCalcOptions() {
+        const panel = document.getElementById('homeAwayCalcOptions');
+        const selected = document.querySelector('input[name="match_type"]:checked');
+
+        if (! panel || ! selected) {
+            return;
+        }
+
+        panel.classList.toggle('hidden', selected.value !== 'home_away');
+    }
+
     document.addEventListener('DOMContentLoaded', function () {
 
     drawBracketConnections(); // WAJIB
+
+    document.querySelectorAll('input[name="match_type"]').forEach(function (radio) {
+        radio.addEventListener('change', updateHomeAwayCalcOptions);
+    });
+    updateHomeAwayCalcOptions();
 
     const thirdPlaceCheckbox =
         document.querySelector('input[name="third_place"]');

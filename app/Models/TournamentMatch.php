@@ -26,16 +26,22 @@ class TournamentMatch extends Model
         'source_away',
         'is_bye',
         'is_third_place',
+        'leg',
         'match_date',
         'venue',
         'home_score',
         'away_score',
+        'home_penalty_score',
+        'away_penalty_score',
         'status',
     ];
 
     protected $casts = [
         'is_bye' => 'boolean',
         'is_third_place' => 'boolean',
+        'leg' => 'integer',
+        'home_penalty_score' => 'integer',
+        'away_penalty_score' => 'integer',
         'match_date' => 'datetime',
     ];
 
