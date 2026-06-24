@@ -4,7 +4,7 @@
 >
 > Format: setiap item punya ID (R1–R22) supaya mudah dirujuk, misalnya: *"kerjakan R6"*.
 
-**Progress: 8 / 22 selesai** *(update 12 Juni 2026: R1, R2, R4, R6, R7, R8, R9, R10 — lihat juga daftar "Selesai di luar daftar" di bawah)*
+**Progress: 22 / 22 selesai ✅** *(update 14 Juni 2026: R22 paket langganan (Free/Pro/Ultimate) + admin root ACC pembayaran + upload bukti transfer + enforcement limit selesai. Semua item R0–R22 tuntas. Sebelumnya: R21 multi-admin (14 Juni); R3,R5,R11–R20 (13 Juni). Lihat juga "Selesai di luar daftar".)*
 
 ---
 
@@ -35,9 +35,10 @@
   - 📁 `resources/views/tournaments/standings.blade.php`
   - 📁 `TournamentController.php` → `buildStandingsGroups()` (±2186)
 
-- [ ] **R3 — Cek pengaturan poin: poin kalah tidak pernah diterapkan** `[BUG]`
-  - `buildStandingsGroups()` tidak pernah menambahkan `$pointSettings['loss']` ke tim yang kalah (±2242–2255)
-  - Samakan urutan default tiebreaker yang beda antara `pointsSettings()` (±375) dan `resolvePointSettings()` (±2360)
+- [x] **R3 — Cek pengaturan poin: poin kalah tidak pernah diterapkan** `[BUG]` *(selesai 13 Juni 2026)*
+  - ✔️ `buildStandingsGroups()` kini menambahkan `$pointSettings['loss']` ke tim yang kalah (kedua cabang menang/kalah)
+  - ✔️ Default tiebreaker `pointsSettings()` disamakan dengan `resolvePointSettings()` → `['points','goal_difference','goals_scored','head_to_head']`
+  - ✔️ Teruji: dengan loss=1, tim kalah dapat 1 poin (sebelumnya 0)
   - 📁 `app/Http/Controllers/TournamentController.php`
 
 - [x] **R4 — Bracket saat tipe Liga: halaman kosong / menu tetap tampil** `[BUG/UX]` *(selesai 11 Juni 2026)*
@@ -45,10 +46,11 @@
   - ✔️ Diselesaikan bersamaan pemisahan 3 sistem kompetisi: tipe `league` menyembunyikan menu Bracket Gugur di sidebar dan `bracketAdmin()` redirect ke klasemen
   - 📁 `resources/views/tournaments/manage.blade.php` (±55) • `TournamentController.php` → `bracketAdmin()` (±604–614)
 
-- [ ] **R5 — QA Liga Reguler dengan Playoff** `[PENGECEKAN]`
-  - Tes menyeluruh alur `league_playoff` (promosi / degradasi / keduanya)
-  - Catatan: saat promosi+degradasi aktif bersamaan, `bracketAdmin()` selalu default ke mode promotion (±633–636)
-  - 📁 `app/Http/Controllers/TournamentController.php`
+- [x] **R5 — QA Liga Reguler dengan Playoff** `[PENGECEKAN → DIPERBAIKI]` *(selesai 13 Juni 2026)*
+  - Bug ditemukan & diperbaiki: saat promosi+degradasi aktif bersamaan, `bracketAdmin()`/`saveBracketAssignments()` selalu default ke mode promotion sehingga bracket degradasi tak bisa diakses/disimpan
+  - ✔️ Mode `both` kini didukung: `?mode=promotion|relegation` memilih bracket yang diedit; baca/tulis ke key terpisah `matches_promotion` / `matches_relegation`; query slot disaring per `stage_type` agar tim promosi & degradasi tidak tertukar
+  - ✔️ Tab **Bracket Promosi / Bracket Degradasi** di halaman Bracket Gugur (muncul hanya saat both); form submit membawa mode aktif
+  - 📁 `TournamentController.php` → `bracketAdmin()` / `saveBracketAssignments()` • `resources/views/admin/tournaments/bracket/manage.blade.php`
 
 ---
 
@@ -96,89 +98,108 @@
     - [x] Switch view jadwal + sidebar menu kondisional per tipe
   - 📁 `TournamentController.php` • `MatchGenerator.php` • `group-settings-panel.blade.php` • partial sidebar
 
-- [ ] **R11 — Liga: pilihan Setengah Kompetisi vs Kompetisi Penuh (kandang-tandang)** `[FITUR BARU]`
-  - Saat ini hanya single round robin; opsi penuh menggandakan jumlah match di Kelola Jadwal & Skor
-  - 📁 `app/Services/MatchGenerator.php` → `buildLeagueStageMatches()` (±140)
+- [x] **R11 — Liga: pilihan Setengah Kompetisi vs Kompetisi Penuh (kandang-tandang)** `[FITUR BARU]` *(selesai 13 Juni 2026)*
+  - ✔️ Kolom baru `league_round_type` (single/double) di `tournament_group_settings`; radio "Format Liga" di panel pengaturan grup (muncul untuk league & league_playoff)
+  - ✔️ `buildLeagueStageMatches()` membangun putaran kedua (home/away dibalik, Matchday melanjutkan) saat `double` → jumlah match jadi 2×. Teruji: 4 tim single=6 match → double=12 match (6 matchday)
+  - 📁 migration `add_league_round_type...` • `TournamentGroupSetting.php` • `app/Services/MatchGenerator.php` → `buildLeagueStageMatches()`/`buildReversedLeg()` • `TournamentController.php` → `updateSettings()` • `group-settings-panel.blade.php`
 
 ---
 
 ## D. Klasemen & Poin
 
-- [ ] **R12 — Standar poin liga berlaku semua tipe + hasil bracket langsung masuk klasemen** `[PENYEMPURNAAN]`
-  - Untuk tipe knockout langsung (R10), hasil bracket harus memengaruhi klasemen
-  - Saat ini klasemen hanya menghitung stage `group` dan `league` (±2217) — knockout dikecualikan
-  - 📁 `TournamentController.php` → `buildStandingsGroups()`
+- [x] **R12 — Standar poin liga berlaku semua tipe + hasil bracket langsung masuk klasemen** `[PENYEMPURNAAN]` *(selesai 13 Juni 2026)*
+  - ✔️ Standar poin (win/draw/loss) kini diterapkan konsisten ke klasemen `league`/`league_playoff` (lihat R3); hasil match `full_time` langsung masuk klasemen (teruji)
+  - ✔️ Keputusan desain (disetujui user): tipe **Turnamen (gugur murni)** tetap memakai bagan bracket — tidak dipaksa punya tabel klasemen; poin playoff TIDAK dicampur ke klasemen liga reguler agar peringkat liga tidak tercemar
+  - ✔️ Bonus: `OfficialStandingsController` disamakan — klasemen manager hanya menghitung stage `group`/`league` + `status=full_time` (sebelumnya ikut menghitung semua match termasuk playoff)
+  - 📁 `TournamentController.php` → `buildStandingsGroups()` • `OfficialStandingsController.php`
 
-- [ ] **R13 — Tie-breakers langsung memengaruhi klasemen + urutan prioritas** `[VERIFIKASI]`
-  - Mekanisme sudah jalan via `compareTeamRows()` (±2301), dihitung ulang tiap match final
-  - Verifikasi: urutan prioritas tersimpan sesuai pilihan admin (saat ini ikut urutan checkbox form, bukan prioritas yang bisa diatur/di-drag)
-  - 📁 `TournamentController.php` • `resources/views/tournaments/partials/points-settings-panel.blade.php`
+- [x] **R13 — Tie-breakers langsung memengaruhi klasemen + urutan prioritas** `[VERIFIKASI]` *(dicek 13 Juni 2026 — sudah terpenuhi, tidak diubah)*
+  - ✔️ Tervalidasi: `compareTeamRows()` mengiterasi tiebreaker sesuai urutan tersimpan; klasemen di-`usort` memakai urutan itu
+  - ✔️ Urutan prioritas **sudah bisa diatur admin** lewat tombol naik/turun (▲▼) di `points-settings-panel.blade.php` + JS `moveTiebreaker()` → tersimpan ke `AppSetting`. Tidak perlu drag-and-drop tambahan
+  - 📁 `TournamentController.php` • `points-settings-panel.blade.php` *(tidak ada perubahan kode)*
 
 ---
 
 ## E. Peserta, Grup & Undian
 
-- [ ] **R14 — Sinkronisasi pengaturan grup ↔ manajemen peserta** `[PENYEMPURNAAN]`
-  - Jumlah tim & grup di settings harus konsisten dengan jumlah peserta terdaftar (validasi dua arah)
-  - Saat ini kelebihan tim ditumpuk ke grup terakhir tanpa peringatan
-  - 📁 `TournamentController.php` → `assignGroupLabelsToTournamentTeams()` (±155–184)
+- [x] **R14 — Sinkronisasi pengaturan grup ↔ manajemen peserta** `[PENYEMPURNAAN]` *(selesai 13 Juni 2026)*
+  - ✔️ `store()` peserta menolak penambahan bila kapasitas grup penuh (`group_count × teams_per_group`) dengan pesan jelas
+  - ✔️ Halaman Peserta menampilkan banner kapasitas "X / Y slot" (merah jika lebih, kuning jika ≥80%)
+  - ✔️ `assignGroupLabelsToTournamentTeams()` dirombak: isi grup ke slot kosong & hormati penempatan manual (tidak menumpuk buta ke grup terakhir kecuali semua penuh)
+  - 📁 `TournamentParticipantController.php` → `store()`/`index()` • `TournamentController.php` → `assignGroupLabelsToTournamentTeams()` • `participants/index.blade.php`
 
-- [ ] **R15 — Penempatan slot tim ke grup secara manual** `[FITUR BARU]`
-  - Admin bisa memilih tim masuk grup mana (saat ini otomatis berdasarkan seed)
-  - 📁 Halaman pengaturan grup / manajemen peserta
+- [x] **R15 — Penempatan slot tim ke grup secara manual** `[FITUR BARU]` *(selesai 13 Juni 2026)*
+  - ✔️ Dropdown grup per tim di halaman Peserta (route `PATCH .../participants/{participant}/group` → `assignGroupManually()`)
+  - ✔️ Kolom baru `group_assigned_manually` di `tournament_teams` menandai penempatan manual/undian; ditandai 🔒 dan TIDAK ditimpa auto-assign berbasis seed
+  - ✔️ Jadwal grup di-regenerate otomatis setelah penempatan diubah
+  - 📁 migration `add_group_assigned_manually...` • `TournamentParticipantController.php` • `participants/index.blade.php` • `routes/web.php`
 
-- [ ] **R16 — Spin / undian tim untuk grup** `[FITUR BARU]`
-  - Fitur undian (animasi spin), hasil tersimpan ke `group_label` di `tournament_teams`
-  - 📁 Fitur baru — view + endpoint penyimpanan hasil undian
+- [x] **R16 — Spin / undian tim untuk grup** `[FITUR BARU]` *(selesai 13 Juni 2026)*
+  - ✔️ Halaman Undian (`tournaments.groupDraw`) dengan animasi spin (slot-machine), tombol "Mulai Undian" → `performGroupDraw()` mengacak (`shuffle`) lalu membagi round-robin ke grup
+  - ✔️ Hasil tersimpan ke `group_label` + ditandai `group_assigned_manually=true`; jadwal grup di-regenerate; tombol "🎲 Undian Grup" di panel pengaturan grup
+  - 📁 `group-draw.blade.php` (baru) • `TournamentController.php` → `groupDraw()`/`performGroupDraw()` • `routes/web.php`
 
-- [ ] **R17 — Manajemen peserta + card pemain** `[PENYEMPURNAAN]`
-  - Tampilkan list/card pemain per tim di halaman peserta sisi admin (data sudah ada di `tournament_team_players`, diisi manager via portal official)
-  - 📁 `resources/views/tournaments/participants/index.blade.php` • `TournamentParticipantController.php`
+- [x] **R17 — Manajemen peserta + card pemain** `[PENYEMPURNAAN]` *(selesai 13 Juni 2026)*
+  - ✔️ Halaman Peserta admin: kolom "Pemain" dengan tombol expand menampilkan card pemain per tim (foto, nama, nomor, posisi, kapten, status) + statistik gol/kartu (R19)
+  - ✔️ Sekalian fix bug: `copyToken()` yang dipanggil tapi belum didefinisikan kini ada
+  - 📁 `TournamentParticipantController.php` → `index()` • `resources/views/admin/tournaments/participants/index.blade.php`
 
 ---
 
 ## F. Verifikasi & Portal Manager
 
-- [ ] **R18 — Verifikasi berkas per tim + kunci setelah disetujui + card list pemain** `[FITUR BARU]`
+- [x] **R18 — Verifikasi berkas per tim + kunci setelah disetujui + card list pemain** `[FITUR BARU]` *(selesai 13 Juni 2026)*
   - Fondasi sudah ada: kolom `verification_status` (pending/approved/rejected) + badge di halaman peserta
   - Sub-tugas:
-    - [ ] Upload berkas per tim
-    - [ ] Tombol Approve / Reject untuk admin
-    - [ ] **Kunci data setelah approved** — manager tidak bisa edit pemain/ofisial (guard di `OfficialPlayerController` & `OfficialTeamOfficialController`)
-    - [ ] Card tim menampilkan list pemain
-  - 📁 `app/Http/Controllers/OfficialPlayerController.php` • `OfficialTeamOfficialController.php` • `participants/index.blade.php` (±59)
+    - [x] Upload berkas per tim — tabel baru `team_verification_documents` (PDF/gambar, maks 8MB); form unggah + daftar berkas + tombol Lihat/Hapus di halaman Verifikasi
+    - [x] Tombol Approve / Reject untuk admin (sudah ada sebelumnya — diverifikasi)
+    - [x] **Kunci data setelah approved** — `guardLockedTeam()` di `OfficialPlayerController` & `OfficialTeamOfficialController` menolak tambah/ubah/hapus pemain & ofisial saat tim `approved`; banner kunci 🔒 di portal manager
+    - [x] Card tim menampilkan list pemain (sudah ada di verification + kini juga di halaman Peserta — lihat R17)
+  - ⚠️ Catatan: form unggah berkas otomatis disembunyikan & berkas dikunci setelah tim approved. `php artisan storage:link` sudah dijalankan agar berkas/foto dapat diakses publik
+  - 📁 migration `create_team_verification_documents_table` • `TeamVerificationDocument.php` (model baru) • `OfficialPlayerController.php` • `OfficialTeamOfficialController.php` • `TournamentController.php` → `uploadVerificationDocument()`/`deleteVerificationDocument()` • `verification.blade.php` • `official/layouts/app.blade.php`
 
-- [ ] **R19 — Live Match terhubung card pemain tim** `[FITUR BARU]` `[SEBAGIAN — 12 Juni 2026]`
+- [x] **R19 — Live Match terhubung card pemain tim** `[FITUR BARU]` *(selesai 13 Juni 2026)*
   - Sub-tugas:
-    - [x] Roster Live Match Logger dari pemain asli (`buildMatchRoster()` membaca `tournament_team_players`: filter aktif, urut nomor punggung, tanda kapten; fallback kartu tim bila roster kosong; lineup otomatis bertukar sisi di Leg 2)
-    - [ ] Tambah relasi `player_id` di `match_events` (saat ini masih `player_name` string)
-    - [ ] Akumulasi statistik (gol/kartu) ke card pemain di halaman peserta
-  - 📁 `TournamentController.php` • `app/Models/MatchEvent.php` • migration `match_events`
+    - [x] Roster Live Match Logger dari pemain asli (`buildMatchRoster()` — sudah ada)
+    - [x] Kolom `player_id` (nullable FK `nullOnDelete`) di `match_events` + relasi `MatchEvent::player()`; diisi saat `storeMatchEvent()`; roster & event logger membawa `player_id` (event lama/tanpa roster tetap valid via `player_name`)
+    - [x] Akumulasi statistik gol/kartu kuning/merah per pemain (query agregat `match_events.player_id`) tampil di card pemain halaman Peserta (⚽ 🟨 🟥)
+  - 📁 migration `add_player_id_to_match_events_table` • `MatchEvent.php` • `TournamentController.php` (`buildMatchRoster`/`storeMatchEvent`/`buildLoggerMatchPayload`) • `schedule/manage.blade.php` • `TournamentParticipantController.php`
 
-- [ ] **R20 — Sistem manager view jadwal** `[QA/PENYEMPURNAAN]`
-  - Sudah ada di `/official/schedule` — sifatnya penyempurnaan
-  - Catatan: match tanpa tanggal tidak tampil karena filter `whereNotNull('match_date')` (±103)
-  - 📁 `app/Http/Controllers/OfficialAuthController.php` → `schedule()` (±90)
+- [x] **R20 — Sistem manager view jadwal** `[QA/PENYEMPURNAAN]` *(selesai 13 Juni 2026)*
+  - ✔️ Match tanpa tanggal (TBD) kini ikut tampil di `/official/schedule` (filter `whereNotNull('match_date')` dihapus; diurutkan tanggal, TBD di akhir)
+  - ✔️ Tab filter baru **"Belum Dijadwalkan"** + tampilan "Belum dijadwalkan / Menunggu jadwal dari panitia" untuk match tanpa tanggal
+  - 📁 `app/Http/Controllers/OfficialAuthController.php` → `schedule()` • `resources/views/official/schedule.blade.php`
 
 ---
 
 ## G. Platform (perubahan arsitektur — paling besar)
 
-- [ ] **R21 — Multi-admin: daftar via Gmail masing-masing** `[FITUR BESAR]`
-  - Saat ini hanya ada login (tidak ada registrasi); `tournaments.created_by` sudah ada tapi data tidak di-scope per admin
+- [x] **R21 — Multi-admin: daftar via Gmail masing-masing** `[FITUR BESAR]` *(selesai 14 Juni 2026)*
   - Sub-tugas:
-    - [ ] Halaman registrasi / Google OAuth (Laravel Socialite)
-    - [ ] Scoping: semua query turnamen & tim difilter per admin yang login
-  - 📁 `app/Http/Controllers/AuthController.php` • `routes/web.php` • semua controller turnamen
+    - [x] Halaman registrasi (email+password, `Password::min(8)` + konfirmasi) **dan** Google OAuth via `laravel/socialite` (^5.27): `redirectToGoogle()`/`handleGoogleCallback()` — user Google disimpan/di-link di tabel `users` (kolom baru `google_id`, `avatar`; `password` kini nullable untuk akun Google-only). Tombol "Masuk/Daftar dengan Google" + link daftar/masuk + "Ingat saya" di halaman login/register
+    - [x] Scoping: `TournamentController::index()` & `TeamController::index()` difilter `where('created_by', Auth::id())`; `store()` mengeset `created_by`; tim peserta (`TournamentParticipantController::store`) mewarisi `created_by` dari pemilik turnamen
+    - [x] **Middleware `owns`** (`EnsureResourceOwnership`) di group route ber-auth: setiap akses route `{tournament}`/`{team}` milik admin lain → **403**. Teruji isolasi 2 admin (index scoping, cross-admin 403, owner lolos, scoping tim) — semua PASS
+    - [x] Header dashboard menampilkan nama/avatar admin yang login + tombol Logout
+    - [x] **Hardening keamanan** (dari review adversarial): (a) anti **account-takeover** — auto-link Google ke akun email lama HANYA jika Google `email_verified=true`, kalau tidak ditolak; (b) `/api/data` & `/api/save` (legacy, tak terpakai) kini di balik `auth`; (c) race-condition Google callback ditangani try/catch `QueryException`; (d) guard email Google kosong; (e) `throttle` di login (10/mnt) & register (5/mnt); (f) middleware tim: `created_by=null` ikut ditolak. Teruji: unverified-email TIDAK ter-link, verified ter-link, akun null-password tak bisa login via password — semua PASS
+  - ⚙️ **Setup Google OAuth (perlu Anda lakukan)**: isi `GOOGLE_CLIENT_ID` & `GOOGLE_CLIENT_SECRET` di `.env` (sudah ada placeholder); daftarkan Authorized redirect URI `<APP_URL>/auth/google/callback` di Google Cloud Console. Tanpa kredensial, tombol Google menampilkan pesan "belum dikonfigurasi" (email+password tetap jalan)
+  - ℹ️ Catatan desain: verifikasi email tidak diwajibkan (pilihan Anda: registrasi terbuka). Jika nanti ingin lebih ketat, aktifkan `MustVerifyEmail` + SMTP.
+  - 🗃️ Data lama: turnamen & tim tanpa `created_by` di-backfill ke admin pertama (admin#1) lewat migrasi — PON 2026 tetap milik `admin@gmail.com`
+  - ⚠️ Catatan: portal manager/official (token-based) **tidak** di-scope `owns` (memang akses lewat `manager_token`, bukan akun admin) — tetap berfungsi
+  - 📁 migration `add_oauth_and_scoping_for_multi_admin` • `AuthController.php` • `app/Http/Middleware/EnsureResourceOwnership.php` (baru) • `bootstrap/app.php` • `routes/web.php` • `User.php`/`Team.php` • `config/services.php` • `admin/auth/login.blade.php` + `register.blade.php` (baru) • `admin/tournaments/index.blade.php`
 
-- [ ] **R22 — Paket berlangganan Free / Reguler / Ultimate + anti-abuse** `[FITUR BESAR]`
-  - **Free**: maks 1 turnamen, 8 tim • **Reguler**: maks 3 turnamen, 32 tim • **Ultimate**: unlimited
+- [x] **R22 — Paket berlangganan Free / Pro / Ultimate + admin root ACC pembayaran** `[FITUR BESAR]` *(selesai 14 Juni 2026)*
+  - **Free**: maks 1 turnamen, 8 tim/turnamen • **Pro**: maks 3 turnamen, 32 tim • **Ultimate**: unlimited (default user baru = Free; limit di `User::PLAN_LIMITS`)
   - Sub-tugas:
-    - [ ] Tabel plans/subscriptions + relasi ke user
-    - [ ] Enforcement limit di `TournamentController::store` & `TournamentParticipantController::store`
-    - [ ] Anti-abuse: verifikasi email + device fingerprint + rate limit per IP (+ verifikasi HP/pembayaran untuk upgrade)
-  - ⚠️ Catatan: block IP saja **lemah** (IP dinamis, VPN, IP kantor/warnet bersama) — pakai kombinasi beberapa lapis; tidak ada yang 100% tapi cukup mahal untuk diakali
-  - Bergantung pada: R21
+    - [x] Kolom `plan` (free/pro/ultimate) + `is_root` di `users`; tabel `subscription_requests` (user_id, requested_plan, payment_proof, amount, status, reviewed_by/at, note) + model `SubscriptionRequest`
+    - [x] **Admin root**: kolom `is_root`; admin#1 (admin@gmail.com) di-set root + ultimate via migrasi. Middleware `root` (`EnsureRoot`) proteksi area `/root/*` — non-root → 403 (teruji)
+    - [x] **Alur upgrade**: admin pilih paket berbayar → **upload bukti transfer** → status pending; admin root tinjau di `/root/requests` → **Setujui** (plan user naik) / **Tolak** (plan tetap + catatan). Double-approve diblokir; double-submit dicegah (`hasPendingSubscriptionRequest`)
+    - [x] Enforcement limit di `TournamentController::store` (jumlah turnamen) & `TournamentParticipantController::store` (jumlah tim) → diarahkan ke halaman paket bila tercapai. Teruji 7 skenario (free keblok di turnamen ke-2 & tim ke-9; pro 3/32; ultimate & root unlimited; approve/reject; guard) — semua PASS
+    - [x] Helper `User`: `planLimits()/tournamentLimit()/teamLimit()/canCreateTournament()/canAddTeamTo()` (root & ultimate bypass)
+    - [~] Anti-abuse: rate-limit `throttle` di register/login (R21) & upgrade (6/mnt); verifikasi pembayaran via ACC manual root. Device fingerprint / verifikasi HP **belum** (bisa ditambah nanti — lihat catatan)
+    - [x] **Hardening pasca review keamanan adversarial**: (a) bukti transfer dipindah ke disk **PRIVAT** (`local`, bukan `public`) + route `root.requests.proof` khusus root (sebelumnya bukti finansial bisa diakses publik via /storage); (b) migrasi root dibuat deterministik (satu root: admin@gmail.com → fallback id terkecil, hapus `orWhere` rapuh); (c) **race condition (TOCTOU)** ditutup dengan `DB::transaction`+`lockForUpdate` di `TournamentController::store` (limit turnamen), `TournamentParticipantController::store` (limit tim + kapasitas grup), `requestUpgrade` (double-pending), `approve`/`reject`; (d) bukti TF yang ditolak dihapus dari storage. Teruji ulang (limit, disk privat, approve, reject+hapus file) — semua PASS
+  - ⚠️ Catatan anti-abuse lanjutan (opsional, belum): block IP lemah (IP dinamis/VPN). Bila perlu lebih ketat → kombinasi verifikasi email (`MustVerifyEmail`) + verifikasi HP/OTP + device fingerprint. Saat ini gating utama = ACC pembayaran manual oleh root
+  - 💳 Info rekening transfer di halaman paket masih placeholder ("BCA 1234567890 a.n. Futsal League") — ganti dengan rekening asli Anda di `resources/views/admin/subscription/plans.blade.php`. Harga: Pro Rp50.000, Ultimate Rp150.000 (`SubscriptionRequest::PRICES`)
+  - 📁 migration `add_plan_and_root_to_users_table` + `create_subscription_requests_table` • `User.php` • `SubscriptionRequest.php` (baru) • `EnsureRoot.php` (baru) • `SubscriptionController.php` (baru) • `Admin/RootController.php` (baru) • `bootstrap/app.php` • `routes/web.php` • `TournamentController.php`/`TournamentParticipantController.php` • `admin/subscription/plans.blade.php` + `admin/root/requests.blade.php` (baru) • `admin/tournaments/index.blade.php`
 
 ---
 
@@ -202,14 +223,14 @@ Perbaikan/fitur yang dikerjakan menyertai R6–R10 tapi tidak ada di daftar asli
 
 | Tahap | Item | Alasan | Status |
 |-------|------|--------|--------|
-| 1 | R3 → R1 → R2 → R4 | Bug cepat & berdampak luas | ⏳ Sisa **R3** (poin kalah) |
+| 1 | R3 → R1 → R2 → R4 | Bug cepat & berdampak luas | ✅ Selesai semua |
 | 2 | R6 → R9 → R7 → R8 | Engine knockout (R6 paling kritis: bracket macet saat seri) | ✅ Selesai semua |
-| 3 | R10 → R11 → R12 → R13 → R5 | Format kompetisi & klasemen | ⏳ R10 selesai; sisa R11, R12, R13, R5 |
-| 4 | R14 → R15 → R16 → R17 | Peserta, grup & undian | ⬜ Belum |
-| 5 | R18 → R19 → R20 | Verifikasi & pemain | ⏳ R19 sebagian (roster asli) |
-| 6 | R21 → R22 | Platform (menyentuh auth & seluruh data) | ⬜ Belum |
+| 3 | R10 → R11 → R12 → R13 → R5 | Format kompetisi & klasemen | ✅ Selesai semua |
+| 4 | R14 → R15 → R16 → R17 | Peserta, grup & undian | ✅ Selesai semua |
+| 5 | R18 → R19 → R20 | Verifikasi & pemain | ✅ Selesai semua |
+| 6 | R21 → R22 | Platform (menyentuh auth & seluruh data) | ✅ Selesai semua |
 
-> **Rekomendasi berikutnya:** R3 (bug poin kalah — cepat dan berdampak ke semua klasemen), lalu lanjut sisa Tahap 3.
+> **Semua revisi R0–R22 selesai.** Tindak lanjut opsional (bukan revisi): ganti rekening transfer placeholder di halaman paket dengan rekening asli; pertimbangkan anti-abuse lanjutan (verifikasi email/HP) bila perlu; housekeeping file `tmp_*.php`/`AUDIT_*` & `app/Debug/MatchTimelineTracer` sebelum deploy.
 
 ---
 

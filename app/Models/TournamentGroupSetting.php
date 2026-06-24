@@ -13,6 +13,7 @@ class TournamentGroupSetting extends Model
         'qualified_teams',
         'relegated_teams',
         'locked',
+        'league_round_type',
     ];
 
     protected $casts = [

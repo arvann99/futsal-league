@@ -12,10 +12,17 @@ class TournamentTeam extends Model
         // 'manager_token', // consolidated to teams.manager_token
         'registration_status',
         'group_label',
+        'group_assigned_manually',
         'seed',
         'bracket_position',
         'is_promoted',
         'is_relegated',
+    ];
+
+    protected $casts = [
+        'group_assigned_manually' => 'boolean',
+        'is_promoted' => 'boolean',
+        'is_relegated' => 'boolean',
     ];
 
     public function tournament()

@@ -15,10 +15,21 @@ class Team extends Model
         'notes',
         'manager_token',
         'verification_status',
+        'created_by',
     ];
+
+    public function creator()
+    {
+        return $this->belongsTo(User::class, 'created_by');
+    }
 
     public function tournamentTeams()
     {
         return $this->hasMany(TournamentTeam::class);
+    }
+
+    public function verificationDocuments()
+    {
+        return $this->hasMany(TeamVerificationDocument::class);
     }
 }

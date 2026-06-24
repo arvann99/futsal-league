@@ -210,13 +210,67 @@ class MatchGenerator
             return [];
         }
 
-        return $this->buildRoundRobinMatchRows(
+        $rows = $this->buildRoundRobinMatchRows(
             $tournament,
             $teamDescriptors,
             'league',
             'League',
             'Matchday'
         );
+
+        // R11 — Kompetisi penuh (double round robin / kandang-tandang):
+        // mainkan setiap pasangan dua kali, putaran kedua membalik home/away.
+        // Penomoran Matchday melanjutkan dari putaran pertama.
+        $roundType = $tournament->groupSetting->league_round_type ?? 'single';
+        if ($roundType === 'double') {
+            $firstLegRoundCount = $this->countMatchdays($rows);
+            $rows = array_merge($rows, $this->buildReversedLeg($rows, $firstLegRoundCount));
+        }
+
+        return $rows;
+    }
+
+    /**
+     * Hitung jumlah Matchday unik pada putaran pertama agar penomoran putaran
+     * kedua menyambung (Matchday N+1, N+2, ...).
+     */
+    private function countMatchdays(array $rows): int
+    {
+        $names = [];
+        foreach ($rows as $row) {
+            $names[$row['round_name']] = true;
+        }
+
+        return count($names);
+    }
+
+    /**
+     * Bangun putaran kedua double round robin: home/away dibalik dan Matchday
+     * dilanjutkan dari putaran pertama.
+     */
+    private function buildReversedLeg(array $firstLegRows, int $offset): array
+    {
+        $reversed = [];
+
+        foreach ($firstLegRows as $row) {
+            // Geser nomor Matchday: "Matchday 1" -> "Matchday (offset+1)".
+            $newRoundName = $row['round_name'];
+            if (preg_match('/^(.*?)(\d+)$/', $row['round_name'], $m)) {
+                $newRoundName = $m[1] . ((int) $m[2] + $offset);
+            }
+
+            $reversed[] = array_merge($row, [
+                'round_name' => $newRoundName,
+                'home_team_id' => $row['away_team_id'],
+                'away_team_id' => $row['home_team_id'],
+                'home_team_key' => $row['away_team_key'],
+                'away_team_key' => $row['home_team_key'],
+                'source_home' => $row['source_away'],
+                'source_away' => $row['source_home'],
+            ]);
+        }
+
+        return $reversed;
     }
 
     private function buildPlayoffMatches(Tournament $tournament, array $bracketValue, string $playoffType): array

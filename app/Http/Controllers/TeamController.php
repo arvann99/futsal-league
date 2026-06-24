@@ -4,13 +4,15 @@ namespace App\Http\Controllers;
 
 use App\Models\Team;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Str;
 
 class TeamController extends Controller
 {
     public function index()
     {
-        $teams = Team::latest()->get();
+        // R21 — scoping: admin hanya melihat tim buatannya.
+        $teams = Team::where('created_by', Auth::id())->latest()->get();
         return view('admin.teams.index', compact('teams'));
     }
 
@@ -32,6 +34,7 @@ class TeamController extends Controller
         $validated['slug'] = $slugBase ? $this->generateUniqueSlug($slugBase) : null;
         $validated['manager_token'] = $this->generateUniqueManagerToken($validated['name']);
         $validated['verification_status'] = 'pending';
+        $validated['created_by'] = Auth::id(); // R21 — scoping tim per admin
 
         Team::create($validated);
 

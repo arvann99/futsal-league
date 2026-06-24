@@ -38,6 +38,20 @@
                         </div>
                         @endunless
                     </div>
+
+                    @if(!empty($hasBothOptions))
+                        {{-- R5 — beralih antara bracket Promosi & Degradasi (mode both) --}}
+                        <div class="mt-5 flex gap-2">
+                            <a href="{{ route('tournaments.bracketAdmin', [$tournament, 'mode' => 'promotion']) }}"
+                               class="px-4 py-2 rounded-lg text-sm font-semibold transition {{ $playoffMode === 'promotion' ? 'bg-violet-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700' }}">
+                                ⬆️ Bracket Promosi
+                            </a>
+                            <a href="{{ route('tournaments.bracketAdmin', [$tournament, 'mode' => 'relegation']) }}"
+                               class="px-4 py-2 rounded-lg text-sm font-semibold transition {{ $playoffMode === 'relegation' ? 'bg-red-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700' }}">
+                                ⬇️ Bracket Degradasi
+                            </a>
+                        </div>
+                    @endif
                 </div>
             </header>
 @endsection
@@ -80,7 +94,7 @@
                 @endif
 
                 @if($competitionType === 'tournament' || $isLeaguePlayoffWithPromotion || $isLeaguePlayoffWithRelegation)
-                <form action="{{ route('tournaments.saveBracketAssignments', $tournament) }}" method="POST" class="space-y-6">
+                <form action="{{ route('tournaments.saveBracketAssignments', !empty($hasBothOptions) ? [$tournament, 'mode' => $playoffMode] : [$tournament]) }}" method="POST" class="space-y-6">
                     @csrf
 
                     <div class="mb-4 flex items-center gap-4">

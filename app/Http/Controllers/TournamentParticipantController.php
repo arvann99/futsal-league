@@ -7,6 +7,7 @@ use App\Models\Tournament;
 use App\Models\TournamentTeam;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
 use App\Services\MatchGenerator;
 
@@ -14,9 +15,40 @@ class TournamentParticipantController extends Controller
 {
     public function index(Tournament $tournament)
     {
-        $participants = $tournament->tournamentTeams()->with('team')->get();
+        $participants = $tournament->tournamentTeams()->with(['team', 'players'])->get();
 
-        return view('admin.tournaments.participants.index', compact('tournament', 'participants'));
+        // R19 — agregasi statistik gol & kartu per pemain (via match_events.player_id)
+        // untuk semua match di turnamen ini.
+        $playerStats = \App\Models\MatchEvent::query()
+            ->whereNotNull('player_id')
+            ->whereIn('match_id', \App\Models\TournamentMatch::where('tournament_id', $tournament->id)->select('id'))
+            ->selectRaw('player_id,
+                SUM(event_type = "goal") as goals,
+                SUM(event_type = "yellow_card") as yellow_cards,
+                SUM(event_type = "red_card") as red_cards')
+            ->groupBy('player_id')
+            ->get()
+            ->keyBy('player_id');
+
+        $tournament->load('groupSetting');
+        $bracketSetting = \App\Models\AppSetting::where('key', 'tournament_' . $tournament->id . '_bracket_settings')->first();
+        $competitionType = $bracketSetting?->value['competition_type'] ?? 'tournament';
+        $usesGroups = $competitionType !== 'tournament'
+            && ($tournament->groupSetting?->group_count ?? 0) > 0;
+
+        $groupLabels = [];
+        if ($usesGroups) {
+            $letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+            $groupLabels = array_slice($letters, 0, (int) $tournament->groupSetting->group_count);
+        }
+
+        return view('admin.tournaments.participants.index', compact(
+            'tournament',
+            'participants',
+            'usesGroups',
+            'groupLabels',
+            'playerStats'
+        ));
     }
 
     public function create(Tournament $tournament)
@@ -42,28 +74,70 @@ class TournamentParticipantController extends Controller
 
         $validated = $request->validate($rules);
 
-        // Handle logo upload
+        $tournament->load('groupSetting');
+        $bracketSetting = \App\Models\AppSetting::where('key', 'tournament_' . $tournament->id . '_bracket_settings')->first();
+        $competitionType = $bracketSetting?->value['competition_type'] ?? 'tournament';
+
+        $teamLimit = Auth::user()->teamLimit(); // null = unlimited
+        $groupCapacity = ($competitionType !== 'tournament' && $tournament->groupSetting)
+            ? (int) $tournament->groupSetting->group_count * (int) $tournament->groupSetting->teams_per_group
+            : 0;
+
+        // Handle logo upload (sebelum transaksi; file yatim saat rollback langka & diabaikan).
         $logoPath = null;
         if ($request->hasFile('logo')) {
             $logoPath = $request->file('logo')->store('team-logos', 'public');
         }
 
-        $team = Team::create([
-            'name' => $validated['name'],
-            'slug' => $this->generateTeamSlug($validated['name']),
-            'logo' => $logoPath,
-            'city' => $validated['city'],
-            'country' => $validated['country'],
-        ]);
+        // R22+R14 — cek limit paket & kapasitas grup secara ATOMIK: lock baris
+        // peserta turnamen ini agar dua request paralel tidak melewati batas.
+        try {
+            \Illuminate\Support\Facades\DB::transaction(function () use ($tournament, $validated, $logoPath, $teamLimit, $groupCapacity) {
+                $current = TournamentTeam::where('tournament_id', $tournament->id)
+                    ->lockForUpdate()
+                    ->count();
 
-        $tournament->load('groupSetting');
-        $groupLabel = $this->assignGroupLabel($tournament);
+                if ($teamLimit !== null && $current >= $teamLimit) {
+                    throw new \RuntimeException('PLAN_LIMIT');
+                }
 
-        TournamentTeam::create([
-            'tournament_id' => $tournament->id,
-            'team_id' => $team->id,
-            'group_label' => $groupLabel,
-        ]);
+                if ($groupCapacity > 0 && $current >= $groupCapacity) {
+                    throw new \RuntimeException('GROUP_FULL:' . $current . '/' . $groupCapacity);
+                }
+
+                $team = Team::create([
+                    'name' => $validated['name'],
+                    'slug' => $this->generateTeamSlug($validated['name']),
+                    'logo' => $logoPath,
+                    'city' => $validated['city'],
+                    'country' => $validated['country'],
+                    'created_by' => $tournament->created_by,
+                ]);
+
+                $groupLabel = $this->assignGroupLabel($tournament);
+
+                TournamentTeam::create([
+                    'tournament_id' => $tournament->id,
+                    'team_id' => $team->id,
+                    'group_label' => $groupLabel,
+                ]);
+            });
+        } catch (\RuntimeException $e) {
+            if ($logoPath) {
+                Storage::disk('public')->delete($logoPath);
+            }
+
+            if ($e->getMessage() === 'PLAN_LIMIT') {
+                return back()->withInput()
+                    ->with('error', "Batas paket Anda tercapai (maks {$teamLimit} tim per turnamen). Upgrade paket untuk menambah peserta.");
+            }
+            if (str_starts_with($e->getMessage(), 'GROUP_FULL:')) {
+                $slot = substr($e->getMessage(), strlen('GROUP_FULL:'));
+                return back()->withInput()
+                    ->with('error', "Kapasitas grup sudah penuh ({$slot} slot). Ubah pengaturan grup (jumlah grup × tim per grup) terlebih dahulu untuk menambah peserta.");
+            }
+            throw $e;
+        }
 
         // Regenerate tournament schedule/bracket after participant added
         app(MatchGenerator::class)->generateForTournament($tournament);
@@ -141,6 +215,50 @@ class TournamentParticipantController extends Controller
 
         return redirect()->route('tournaments.participants.index', $tournament)
             ->with('success', 'Peserta berhasil dihapus dari turnamen.');
+    }
+
+    /**
+     * R15 — Admin menetapkan grup sebuah tim secara manual. Penempatan manual
+     * ditandai (group_assigned_manually) agar auto-assign berbasis seed tidak
+     * menimpanya saat pengaturan grup disimpan ulang.
+     */
+    public function assignGroupManually(Request $request, Tournament $tournament, TournamentTeam $participant)
+    {
+        if ($participant->tournament_id !== $tournament->id) {
+            abort(404);
+        }
+
+        $tournament->load('groupSetting');
+        $bracketSetting = \App\Models\AppSetting::where('key', 'tournament_' . $tournament->id . '_bracket_settings')->first();
+        $competitionType = $bracketSetting?->value['competition_type'] ?? 'tournament';
+
+        if ($competitionType === 'tournament' || ! $tournament->groupSetting || ! $tournament->groupSetting->group_count) {
+            return back()->with('error', 'Turnamen ini tidak memakai grup, penempatan grup tidak tersedia.');
+        }
+
+        $letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+        $validGroups = array_slice($letters, 0, (int) $tournament->groupSetting->group_count);
+
+        $validated = $request->validate([
+            'group_label' => ['nullable', 'string', 'in:' . implode(',', $validGroups)],
+        ]);
+
+        $label = $validated['group_label'] ?? null;
+
+        $participant->update([
+            'group_label' => $label,
+            'group_assigned_manually' => $label !== null,
+        ]);
+
+        // Regenerasi jadwal agar match grup ikut perubahan penempatan.
+        app(MatchGenerator::class)->generateForTournament($tournament);
+
+        $teamName = $participant->team?->name ?? 'Tim';
+        $msg = $label
+            ? "{$teamName} dipindahkan ke Grup {$label}."
+            : "{$teamName} dikeluarkan dari grup.";
+
+        return back()->with('success', $msg);
     }
 
     private function generateTeamSlug(string $name): string

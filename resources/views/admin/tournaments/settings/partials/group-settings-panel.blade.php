@@ -141,6 +141,46 @@
             </div>
         </div>
 
+        @php
+            $selectedLeagueRound = old('league_round_type', $tournament->groupSetting->league_round_type ?? 'single');
+        @endphp
+        <div id="leagueRoundCard" class="bg-slate-900 rounded-xl border border-slate-800 p-6 mt-4 transition duration-200 {{ ($isLeagueSelected || $isLeaguePlayoffSelected) ? '' : 'hidden' }}">
+            <label class="block text-sm font-semibold text-white mb-4">
+                <span class="flex items-center gap-2 mb-2">
+                    <svg class="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                    </svg>
+                    Format Liga
+                </span>
+            </label>
+            <p class="text-slate-400 text-sm mb-4">Setengah kompetisi (sekali bertemu) atau kompetisi penuh / kandang-tandang (dua kali bertemu, putaran kedua tuan rumah dibalik).</p>
+
+            <div class="grid gap-3 sm:grid-cols-2">
+                <label class="flex items-start gap-3 p-4 bg-slate-800 rounded-lg cursor-pointer hover:bg-slate-700 transition">
+                    <input type="radio" name="league_round_type" value="single" class="w-4 h-4 mt-1 text-cyan-400" {{ $selectedLeagueRound === 'single' ? 'checked' : '' }} {{ $isLocked ? 'disabled' : '' }}>
+                    <span>
+                        <span class="block text-slate-100 font-medium">Setengah Kompetisi</span>
+                        <span class="block text-xs text-slate-400 mt-1">Single round robin — setiap pasangan bertemu sekali.</span>
+                    </span>
+                </label>
+
+                <label class="flex items-start gap-3 p-4 bg-slate-800 rounded-lg cursor-pointer hover:bg-slate-700 transition">
+                    <input type="radio" name="league_round_type" value="double" class="w-4 h-4 mt-1 text-cyan-400" {{ $selectedLeagueRound === 'double' ? 'checked' : '' }} {{ $isLocked ? 'disabled' : '' }}>
+                    <span>
+                        <span class="block text-slate-100 font-medium">Kompetisi Penuh (Kandang-Tandang)</span>
+                        <span class="block text-xs text-slate-400 mt-1">Double round robin — setiap pasangan bertemu dua kali; jumlah matchday menjadi dua kali lipat.</span>
+                    </span>
+                </label>
+            </div>
+
+            @if($tournament->groupSetting && ($tournament->groupSetting->group_count ?? 0) > 0)
+                <div class="mt-4 flex items-center justify-between gap-3 rounded-lg bg-slate-800/60 border border-slate-700 p-4">
+                    <p class="text-sm text-slate-300">Acak penempatan tim ke grup lewat undian (spin).</p>
+                    <a href="{{ route('tournaments.groupDraw', $tournament) }}" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 rounded-lg text-white text-sm font-semibold transition whitespace-nowrap">🎲 Undian Grup</a>
+                </div>
+            @endif
+        </div>
+
         <div id="playoffTypeCard" class="bg-slate-900 rounded-xl border border-slate-800 p-6 mt-4 transition duration-200 {{ $isLeaguePlayoffSelected ? '' : 'hidden' }}">
             <label class="block text-sm font-semibold text-white mb-4">
                 <span class="flex items-center gap-2 mb-2">
@@ -673,8 +713,11 @@
         // Kartu pengaturan grup hanya relevan untuk liga & liga-playoff
         const groupSizeCard = document.getElementById('groupSizeCard');
         const tournamentInfoCard = document.getElementById('tournamentInfoCard');
+        const leagueRoundCard = document.getElementById('leagueRoundCard');
         if (groupSizeCard) groupSizeCard.classList.toggle('hidden', selectedType === 'tournament');
         if (tournamentInfoCard) tournamentInfoCard.classList.toggle('hidden', selectedType !== 'tournament');
+        // R11 — kartu format liga hanya untuk league / league_playoff
+        if (leagueRoundCard) leagueRoundCard.classList.toggle('hidden', !(isLeagueSelected || isLeaguePlayoffSelected));
         document.querySelectorAll('.competition-hint').forEach(el => {
             el.style.display = el.dataset.type === selectedType ? '' : 'none';
         });

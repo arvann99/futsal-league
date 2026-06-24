@@ -97,13 +97,15 @@ class OfficialAuthController extends Controller
 
         $tournamentTeamIds = $team->tournamentTeams()->pluck('id');
 
+        // R20 — tampilkan juga pertandingan yang belum dijadwalkan (match_date
+        // NULL / TBD) supaya manager bisa melihat lawan & babak lebih awal.
+        // Match terjadwal diurutkan menurut tanggal, yang TBD ditaruh di akhir.
         $matches = TournamentMatch::with(['tournament', 'homeTeam.team', 'awayTeam.team'])
             ->where(function ($query) use ($tournamentTeamIds) {
                 $query->whereIn('home_team_id', $tournamentTeamIds)
                     ->orWhereIn('away_team_id', $tournamentTeamIds);
             })
-            ->whereNotNull('match_date')
-            ->orderBy('match_date', 'asc')
+            ->orderByRaw('match_date IS NULL, match_date ASC')
             ->get();
 
         $now = now();
@@ -119,6 +121,10 @@ class OfficialAuthController extends Controller
 
             if ($filter === 'finished') {
                 return $match->match_date && $match->match_date->lt($now);
+            }
+
+            if ($filter === 'tbd') {
+                return ! $match->match_date;
             }
 
             return true;

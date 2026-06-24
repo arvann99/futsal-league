@@ -4,20 +4,36 @@ use App\Http\Controllers\TournamentController;
 use App\Http\Controllers\TournamentParticipantController;
 use App\Http\Controllers\TeamController;
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\SubscriptionController;
+use App\Http\Controllers\Admin\RootController;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Auth;
 
-// --- API ROUTES ---
-Route::get('/api/data', [TournamentController::class, 'getData']);
-Route::post('/api/save', [TournamentController::class, 'saveAll']);
+// --- API ROUTES (legacy localStorage-style; wajib login agar tidak bocor
+// data lintas admin / publik — R21) ---
+Route::middleware('auth')->group(function () {
+    Route::get('/api/data', [TournamentController::class, 'getData']);
+    Route::post('/api/save', [TournamentController::class, 'saveAll']);
+});
 
 // --- AUTH ROUTES ---
 // Gunakan satu saja untuk menampilkan form login
 Route::get('/login', [AuthController::class, 'showLogin'])->name('login');
-Route::post('/login', [AuthController::class, 'login']);
+// R21 — throttle untuk cegah brute-force (10 percobaan / menit per IP).
+Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:10,1');
+
+// R21 — registrasi admin baru (email + password)
+Route::get('/register', [AuthController::class, 'showRegister'])->name('register');
+Route::post('/register', [AuthController::class, 'register'])->middleware('throttle:5,1');
+
+// R21 — Google OAuth (Socialite)
+Route::get('/auth/google', [AuthController::class, 'redirectToGoogle'])->name('auth.google');
+Route::get('/auth/google/callback', [AuthController::class, 'handleGoogleCallback'])->name('auth.google.callback');
 
 // --- PROTECTED ROUTES (Hanya untuk yang sudah login) ---
-Route::middleware(['auth'])->group(function () {
+// R21 — 'owns' menjaga setiap route {tournament}/{team} hanya bisa diakses
+// oleh admin pemiliknya (created_by). Route tanpa binding tsb tidak terdampak.
+Route::middleware(['auth', 'owns'])->group(function () {
     // Dashboard - Redirect ke tournaments.index
     Route::get('/dashboard', [TournamentController::class, 'index'])->name('dashboard');
 
@@ -36,7 +52,12 @@ Route::middleware(['auth'])->group(function () {
     Route::get('/tournaments/{tournament}/participants/{participant}/edit', [TournamentParticipantController::class, 'edit'])->name('tournaments.participants.edit');
     Route::put('/tournaments/{tournament}/participants/{participant}', [TournamentParticipantController::class, 'update'])->name('tournaments.participants.update');
     Route::delete('/tournaments/{tournament}/participants/{participant}', [TournamentParticipantController::class, 'destroy'])->name('tournaments.participants.destroy');
-    
+    // R15 — penempatan grup manual
+    Route::patch('/tournaments/{tournament}/participants/{participant}/group', [TournamentParticipantController::class, 'assignGroupManually'])->name('tournaments.participants.assignGroup');
+    // R16 — undian / spin tim ke grup
+    Route::get('/tournaments/{tournament}/group-draw', [TournamentController::class, 'groupDraw'])->name('tournaments.groupDraw');
+    Route::post('/tournaments/{tournament}/group-draw', [TournamentController::class, 'performGroupDraw'])->name('tournaments.performGroupDraw');
+
     // Tournament Management Dashboard
     Route::get('/tournaments/{tournament}/manage', [TournamentController::class, 'manage'])->name('tournaments.manage');
     
@@ -67,11 +88,27 @@ Route::middleware(['auth'])->group(function () {
     // Tournament Document Verification
     Route::get('/tournaments/{tournament}/verification', [TournamentController::class, 'verification'])->name('tournaments.verification');
     Route::patch('/tournaments/{tournament}/participants/{participant}/verify', [TournamentController::class, 'verifyParticipant'])->name('tournaments.participants.verify');
+    // R18 — berkas verifikasi per tim
+    Route::post('/tournaments/{tournament}/participants/{participant}/documents', [TournamentController::class, 'uploadVerificationDocument'])->name('tournaments.participants.documents.upload');
+    Route::delete('/tournaments/{tournament}/participants/{participant}/documents/{document}', [TournamentController::class, 'deleteVerificationDocument'])->name('tournaments.participants.documents.delete');
+
+    // R22 — Paket langganan (admin) + upgrade dengan bukti transfer
+    Route::get('/subscription', [SubscriptionController::class, 'showPlans'])->name('subscription.plans');
+    Route::post('/subscription/upgrade', [SubscriptionController::class, 'requestUpgrade'])
+        ->middleware('throttle:6,1')->name('subscription.upgrade');
 
     Route::post('/logout', function () {
         Auth::logout();
         return redirect('/login');
     })->name('logout');
+});
+
+// R22 — Area admin ROOT: tinjau & ACC pembayaran upgrade paket
+Route::middleware(['auth', 'root'])->prefix('root')->name('root.')->group(function () {
+    Route::get('/requests', [RootController::class, 'requests'])->name('requests');
+    Route::get('/requests/{subscriptionRequest}/proof', [RootController::class, 'proof'])->name('requests.proof');
+    Route::post('/requests/{subscriptionRequest}/approve', [RootController::class, 'approve'])->name('requests.approve');
+    Route::post('/requests/{subscriptionRequest}/reject', [RootController::class, 'reject'])->name('requests.reject');
 });
 
 // Portal landing page for admin, official, and public access

@@ -13,6 +13,7 @@ class MatchEvent extends Model
         'event_type',
         'team_side',
         'player_name',
+        'player_id',
         'description',
         'minute',
     ];
@@ -24,5 +25,10 @@ class MatchEvent extends Model
     public function match()
     {
         return $this->belongsTo(TournamentMatch::class, 'match_id');
+    }
+
+    public function player()
+    {
+        return $this->belongsTo(TournamentTeamPlayer::class, 'player_id');
     }
 }

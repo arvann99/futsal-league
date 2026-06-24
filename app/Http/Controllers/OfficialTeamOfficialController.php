@@ -39,9 +39,13 @@ class OfficialTeamOfficialController extends Controller
 
     public function store(Request $request)
     {
-        
-
         $team = $this->getOfficialTeam($request);
+
+        // R18 — kunci data setelah berkas tim disetujui admin.
+        if ($lock = $this->guardLockedTeam($team)) {
+            return $lock;
+        }
+
         $tournamentTeamIds = $team->tournamentTeams()->pluck('id')->toArray();
 
        $validated = $request->validate([
@@ -105,6 +109,10 @@ class OfficialTeamOfficialController extends Controller
     {
         $this->authorizeOfficial($request, $official);
 
+        if ($lock = $this->guardLockedTeam($this->getOfficialTeam($request))) {
+            return $lock;
+        }
+
         $validated = $request->validate([
             'official_name' => 'required|string|max:255',
             'role_selection' => 'required|string|in:Manager,Coach,Assistant Coach,Lainnya',
@@ -140,6 +148,10 @@ class OfficialTeamOfficialController extends Controller
     {
         $this->authorizeOfficial($request, $official);
 
+        if ($lock = $this->guardLockedTeam($this->getOfficialTeam($request))) {
+            return $lock;
+        }
+
         $official->delete();
 
         return redirect()->route('official.officials.index')->with('success', 'Official berhasil dihapus.');
@@ -150,6 +162,18 @@ class OfficialTeamOfficialController extends Controller
         $teamId = $request->session()->get('official_team_id');
 
         return Team::findOrFail($teamId);
+    }
+
+    /**
+     * R18 — Jika berkas tim sudah disetujui (approved), data ofisial dikunci.
+     */
+    private function guardLockedTeam(Team $team)
+    {
+        if (($team->verification_status ?? 'pending') === 'approved') {
+            return back()->with('error', 'Data tim sudah diverifikasi & dikunci oleh panitia. Hubungi panitia jika perlu perubahan.');
+        }
+
+        return null;
     }
 
     private function authorizeOfficial(Request $request, TournamentTeamOfficial $official): void

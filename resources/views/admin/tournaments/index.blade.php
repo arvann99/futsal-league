@@ -33,6 +33,34 @@
                     </svg>
                     Manajemen Tim
                 </a>
+
+                {{-- R22 — paket / upgrade + (root) ACC pembayaran --}}
+                <a href="{{ route('subscription.plans') }}" class="w-full sm:w-auto px-4 sm:px-6 py-3 bg-slate-800 hover:bg-slate-700 text-white font-semibold rounded-xl transition flex items-center justify-center gap-2 whitespace-nowrap">
+                    💳 Paket <span class="text-xs px-2 py-0.5 rounded-full bg-indigo-600">{{ ucfirst(auth()->user()?->plan ?? 'free') }}</span>
+                </a>
+                @if(auth()->user()?->is_root)
+                    @php($pendingReq = \App\Models\SubscriptionRequest::where('status','pending')->count())
+                    <a href="{{ route('root.requests') }}" class="w-full sm:w-auto px-4 sm:px-6 py-3 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-xl transition flex items-center justify-center gap-2 whitespace-nowrap">
+                        🛡️ ACC Pembayaran
+                        @if($pendingReq > 0)<span class="text-xs px-2 py-0.5 rounded-full bg-rose-600">{{ $pendingReq }}</span>@endif
+                    </a>
+                @endif
+
+                {{-- R21 — identitas admin yang login + logout --}}
+                <div class="w-full sm:w-auto flex items-center gap-3 sm:ml-auto">
+                    <div class="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-800/60 border border-slate-700">
+                        @if(auth()->user()?->avatar)
+                            <img src="{{ auth()->user()->avatar }}" alt="avatar" class="w-7 h-7 rounded-full object-cover">
+                        @else
+                            <span class="w-7 h-7 rounded-full bg-indigo-600 flex items-center justify-center text-xs font-bold">{{ strtoupper(substr(auth()->user()?->name ?? 'A', 0, 1)) }}</span>
+                        @endif
+                        <span class="text-sm text-slate-200 max-w-[140px] truncate">{{ auth()->user()?->name }}</span>
+                    </div>
+                    <form action="{{ route('logout') }}" method="POST">
+                        @csrf
+                        <button type="submit" class="px-4 py-2 rounded-xl bg-rose-600/80 hover:bg-rose-600 text-white text-sm font-semibold transition whitespace-nowrap">Logout</button>
+                    </form>
+                </div>
             </div>
         </div>
     </header>

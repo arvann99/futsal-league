@@ -290,7 +290,7 @@
                 penalty_miss: 'Penalti Gagal',
             };
 
-            function createEventButton(type, side, playerName, disabled) {
+            function createEventButton(type, side, playerName, disabled, playerId) {
                 const button = document.createElement('button');
                 button.type = 'button';
                 button.className = 'rounded-lg px-2.5 py-1 text-[11px] font-medium text-white transition hover:opacity-90';
@@ -320,7 +320,7 @@ else if (type === 'penalty_miss') {
                 }
 
                 button.addEventListener('click', function () {
-                    submitLiveEvent(type, side, playerName);
+                    submitLiveEvent(type, side, playerName, playerId);
                 });
 
                 return button;
@@ -341,7 +341,7 @@ else if (type === 'penalty_miss') {
                 loggerFlash.classList.remove('hidden');
             }
 
-            async function submitLiveEvent(type, side, playerName) {
+            async function submitLiveEvent(type, side, playerName, playerId) {
                 if (eventSubmitPending) {
                     return;
                 }
@@ -350,6 +350,16 @@ else if (type === 'penalty_miss') {
                 showLoggerFlash('');
 
                 try {
+                    const bodyParams = {
+                        event_type: type,
+                        team_side: side,
+                        player_name: playerName || '',
+                    };
+                    // R19 — sertakan player_id bila roster punya pemain asli.
+                    if (playerId !== null && playerId !== undefined && playerId !== '') {
+                        bodyParams.player_id = playerId;
+                    }
+
                     const response = await fetch(eventForm.action, {
                         method: 'POST',
                         headers: {
@@ -358,11 +368,7 @@ else if (type === 'penalty_miss') {
                             'X-Requested-With': 'XMLHttpRequest',
                             'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
                         },
-                        body: new URLSearchParams({
-                            event_type: type,
-                            team_side: side,
-                            player_name: playerName || '',
-                        }).toString(),
+                        body: new URLSearchParams(bodyParams).toString(),
                     });
 
                     const data = await response.json().catch(() => ({}));
@@ -473,7 +479,7 @@ else if (type === 'penalty_miss') {
                     const actions = document.createElement('div');
                     actions.className = 'mt-3 flex flex-wrap gap-2';
                     types.forEach(type => {
-                        actions.appendChild(createEventButton(type, side, player.player_name, disabled || sentOff));
+                        actions.appendChild(createEventButton(type, side, player.player_name, disabled || sentOff, player.player_id));
                     });
                     card.appendChild(actions);
                     panel.appendChild(card);

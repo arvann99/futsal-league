@@ -56,6 +56,8 @@ class OfficialStandingsController extends Controller
         }
 
         $matches = TournamentMatch::where('tournament_id', $tournament->id)
+            ->where('status', 'full_time')
+            ->whereIn('stage_type', ['group', 'league'])
             ->whereNotNull('home_score')
             ->whereNotNull('away_score')
             ->get();
