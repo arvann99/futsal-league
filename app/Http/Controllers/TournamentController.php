@@ -85,28 +85,207 @@ class TournamentController extends Controller
     public function manage(Tournament $tournament)
     {
         $tournament->load('creator');
-        
-        // Hitung statistik turnamen
-        $statistics = [
-            'total_pendaftar' => 0,
-            'terverifikasi' => 0,
-            'butuh_verifikasi' => 0,
-            'ditolak_draft' => 0,
-        ];
 
         // Dapatkan competition type dari bracket setting
         $bracketSetting = $this->resolveBracketSetting($tournament);
         $competitionType = $bracketSetting->value['competition_type'] ?? 'tournament';
         $playoffOptions = $bracketSetting->value['playoff_options'] ?? [];
-        
+
         // Tentukan apakah bracket admin tersedia
         $isTournament = $competitionType === 'tournament';
+        $isGroupKnockout = $competitionType === 'group_knockout';
         $hasPromotion = in_array('promotion', $playoffOptions);
         $hasRelegation = in_array('relegation', $playoffOptions);
         $isLeaguePlayoff = $competitionType === 'league_playoff' && ($hasPromotion || $hasRelegation);
-        $bracketAdminAvailable = $isTournament || $isLeaguePlayoff;
+        $bracketAdminAvailable = $isTournament || $isLeaguePlayoff || $isGroupKnockout;
 
-        return view('admin.tournaments.manage', compact('tournament', 'statistics', 'competitionType', 'bracketAdminAvailable'));
+        $statistics = $this->buildDashboardStatistics($tournament);
+        $matchProgress = $this->buildMatchProgress($tournament);
+        $nextMatch = $this->buildNextMatch($tournament);
+        $recentResults = $this->buildRecentResults($tournament);
+        $champion = $this->resolveChampion($tournament, $competitionType);
+
+        return view('admin.tournaments.manage', compact(
+            'tournament',
+            'statistics',
+            'competitionType',
+            'bracketAdminAvailable',
+            'matchProgress',
+            'nextMatch',
+            'recentResults',
+            'champion'
+        ));
+    }
+
+    /**
+     * Statistik pendaftaran tim berdasarkan status verifikasi (teams.verification_status).
+     */
+    private function buildDashboardStatistics(Tournament $tournament): array
+    {
+        $counts = TournamentTeam::where('tournament_teams.tournament_id', $tournament->id)
+            ->leftJoin('teams', 'teams.id', '=', 'tournament_teams.team_id')
+            ->selectRaw("COALESCE(teams.verification_status, 'pending') as status, COUNT(*) as total")
+            ->groupBy('status')
+            ->pluck('total', 'status');
+
+        $approved = (int) ($counts['approved'] ?? 0);
+        $pending = (int) ($counts['pending'] ?? 0);
+        $rejected = (int) ($counts['rejected'] ?? 0);
+        $total = (int) $counts->sum();
+
+        return [
+            'total_pendaftar' => $total,
+            'terverifikasi' => $approved,
+            'butuh_verifikasi' => $pending,
+            'ditolak_draft' => $rejected,
+            'readiness_percent' => $total > 0 ? (int) round($approved / $total * 100) : 0,
+        ];
+    }
+
+    /**
+     * Ringkasan kemajuan pertandingan (selesai / berlangsung / terjadwal).
+     */
+    private function buildMatchProgress(Tournament $tournament): array
+    {
+        $rows = TournamentMatch::where('tournament_id', $tournament->id)
+            ->where('is_bye', false)
+            ->selectRaw('status, COUNT(*) as total')
+            ->groupBy('status')
+            ->pluck('total', 'status');
+
+        $finished = (int) ($rows['full_time'] ?? 0);
+        $live = (int) ($rows['live_match'] ?? 0) + (int) ($rows['penalty_shootout'] ?? 0);
+        $total = (int) $rows->sum();
+        $upcoming = max($total - $finished - $live, 0);
+
+        return [
+            'total' => $total,
+            'finished' => $finished,
+            'live' => $live,
+            'upcoming' => $upcoming,
+            'percent' => $total > 0 ? (int) round($finished / $total * 100) : 0,
+        ];
+    }
+
+    /**
+     * Pertandingan terdekat yang belum dimainkan (untuk panel "Laga Berikutnya").
+     */
+    private function buildNextMatch(Tournament $tournament): ?array
+    {
+        $match = TournamentMatch::with(['homeTeam.team', 'awayTeam.team'])
+            ->where('tournament_id', $tournament->id)
+            ->where('is_bye', false)
+            ->whereIn('status', ['scheduled', 'live_match', 'penalty_shootout'])
+            ->whereNotNull('home_team_id')
+            ->whereNotNull('away_team_id')
+            ->orderByRaw('match_date IS NULL')
+            ->orderBy('match_date')
+            ->orderBy('id')
+            ->first();
+
+        if (! $match) {
+            return null;
+        }
+
+        return [
+            'home' => $match->homeTeam?->team?->name ?? $match->home_team_key ?? 'TBD',
+            'away' => $match->awayTeam?->team?->name ?? $match->away_team_key ?? 'TBD',
+            'home_logo' => $match->homeTeam?->team?->logo,
+            'away_logo' => $match->awayTeam?->team?->logo,
+            'stage' => $this->buildScheduleBaseLabel($match),
+            'date' => $match->match_date,
+            'venue' => $match->venue,
+            'is_live' => in_array($match->status, ['live_match', 'penalty_shootout'], true),
+        ];
+    }
+
+    /**
+     * Hasil pertandingan terakhir yang sudah selesai.
+     */
+    private function buildRecentResults(Tournament $tournament, int $limit = 5): array
+    {
+        return TournamentMatch::with(['homeTeam.team', 'awayTeam.team'])
+            ->where('tournament_id', $tournament->id)
+            ->where('status', 'full_time')
+            ->where('is_bye', false)
+            ->orderByRaw('match_date IS NULL')
+            ->orderByDesc('match_date')
+            ->orderByDesc('id')
+            ->limit($limit)
+            ->get()
+            ->map(fn ($match) => [
+                'home' => $match->homeTeam?->team?->name ?? $match->home_team_key ?? 'TBD',
+                'away' => $match->awayTeam?->team?->name ?? $match->away_team_key ?? 'TBD',
+                'home_score' => (int) $match->home_score,
+                'away_score' => (int) $match->away_score,
+                'home_pen' => $match->home_penalty_score,
+                'away_pen' => $match->away_penalty_score,
+                'stage' => $this->buildScheduleBaseLabel($match),
+            ])
+            ->all();
+    }
+
+    /**
+     * Juara turnamen: pemenang laga Final yang sudah selesai. Untuk format liga
+     * murni (tanpa bracket), juara adalah pemuncak klasemen tunggal bila semua
+     * laga liga telah dimainkan.
+     */
+    private function resolveChampion(Tournament $tournament, string $competitionType): ?array
+    {
+        // Format dengan bracket: juara = pemenang laga Final yang sudah final.
+        $final = TournamentMatch::with(['homeTeam.team', 'awayTeam.team'])
+            ->where('tournament_id', $tournament->id)
+            ->where('round_name', 'Final')
+            ->where('is_third_place', false)
+            ->where('status', 'full_time')
+            ->orderByDesc('leg')
+            ->orderByDesc('id')
+            ->first();
+
+        if ($final) {
+            $resolver = app(TieResolver::class);
+            $outcome = $resolver->tieOutcome($final, $resolver->calculationMode($tournament));
+
+            if ($outcome['both_played']) {
+                $winner = $resolver->winnerDescriptor($final, $outcome);
+                if ($winner) {
+                    $logo = $winner['team_id'] === $final->home_team_id
+                        ? $final->homeTeam?->team?->logo
+                        : $final->awayTeam?->team?->logo;
+
+                    return [
+                        'name' => $winner['name'],
+                        'logo' => $logo,
+                        'context' => 'Juara — Final',
+                    ];
+                }
+            }
+        }
+
+        // Liga murni (tanpa playoff bracket): juara = peringkat 1 klasemen bila
+        // seluruh laga liga sudah dimainkan.
+        if ($competitionType === 'league') {
+            $remaining = TournamentMatch::where('tournament_id', $tournament->id)
+                ->whereIn('stage_type', ['group', 'league'])
+                ->where('is_bye', false)
+                ->where('status', '!=', 'full_time')
+                ->exists();
+
+            if (! $remaining) {
+                $groups = $this->buildStandingsGroups($tournament);
+                $top = collect($groups)->flatten(1)->sortByDesc('points')->first();
+
+                if (is_array($top) && ! empty($top['name'])) {
+                    return [
+                        'name' => $top['name'],
+                        'logo' => $top['logo'] ?? null,
+                        'context' => 'Juara Liga — Puncak Klasemen',
+                    ];
+                }
+            }
+        }
+
+        return null;
     }
 
     // Tampilkan form edit turnamen
@@ -258,6 +437,7 @@ class TournamentController extends Controller
             ->orderBy('group_label')
             ->orderBy('bracket_match_id')
             ->orderBy('leg')
+            ->orderByRaw("CAST(REGEXP_REPLACE(round_name, '[^0-9]', '') AS UNSIGNED)")
             ->orderBy('round_name')
             ->orderBy('id')
             ->get();
@@ -981,10 +1161,11 @@ class TournamentController extends Controller
         
         // Check if bracket admin is allowed for this competition type
         $isTournament = $competitionType === 'tournament';
+        $isGroupKnockout = $competitionType === 'group_knockout';
         $hasPromotion = in_array('promotion', $playoffOptions);
         $hasRelegation = in_array('relegation', $playoffOptions);
         $isLeaguePlayoff = $competitionType === 'league_playoff' && ($hasPromotion || $hasRelegation);
-        $bracketAllowed = $isTournament || $isLeaguePlayoff;
+        $bracketAllowed = $isTournament || $isLeaguePlayoff || $isGroupKnockout;
 
         if ($competitionType === 'league') {
             // Sistem liga murni tidak memiliki babak gugur
@@ -1043,6 +1224,7 @@ class TournamentController extends Controller
 
         $isLeaguePlayoffWithPromotion = $competitionType === 'league_playoff' && $playoffMode === 'promotion';
         $isLeaguePlayoffWithRelegation = $competitionType === 'league_playoff' && $playoffMode === 'relegation';
+        $isGroupKnockout = $competitionType === 'group_knockout';
 
         // Load actual TournamentTeam records for Manual mode selection
         $tournamentTeams = $tournament->tournamentTeams()->with('team')->get();
@@ -1062,6 +1244,11 @@ class TournamentController extends Controller
             })
             ->get()
             ->keyBy('bracket_match_id');
+
+        // Ringkasan skor per kartu bracket (single / 2-leg / adu penalti) untuk
+        // ditampilkan di bagan. Dibangun dari TieResolver agar agregat, leg, dan
+        // penalti konsisten dengan logika penentuan pemenang.
+        $bracketScores = $this->buildBracketScoreSummaries($tournament, $hasBothOptions ? $playoffMode : null);
 
         // Mode turnamen (gugur murni) tidak memiliki fase grup yang harus ditunggu
         $groupStageComplete = $isTournament ? true : $this->isGroupStageComplete($tournament);
@@ -1103,7 +1290,7 @@ class TournamentController extends Controller
             }
         }
 
-        return view('admin.tournaments.bracket.manage', compact('tournament', 'setting', 'teamsToUse', 'competitionType', 'isLeaguePlayoffWithPromotion', 'isLeaguePlayoffWithRelegation', 'playoffMode', 'hasBothOptions', 'tournamentTeams', 'assignedMatches', 'groupStageComplete', 'qualifiedTeamOptions'));
+        return view('admin.tournaments.bracket.manage', compact('tournament', 'setting', 'teamsToUse', 'competitionType', 'isLeaguePlayoffWithPromotion', 'isLeaguePlayoffWithRelegation', 'isGroupKnockout', 'playoffMode', 'hasBothOptions', 'tournamentTeams', 'assignedMatches', 'groupStageComplete', 'qualifiedTeamOptions', 'bracketScores'));
     }
 
     public function saveBracketAssignments(Request $request, Tournament $tournament)
@@ -1460,7 +1647,7 @@ class TournamentController extends Controller
             $updated = true;
         }
 
-        if (! isset($value['competition_type']) || ! in_array($value['competition_type'], ['tournament', 'league', 'league_playoff'], true)) {
+        if (! isset($value['competition_type']) || ! in_array($value['competition_type'], ['tournament', 'league', 'league_playoff', 'group_knockout'], true)) {
             $value['competition_type'] = $default['competition_type'];
             $updated = true;
         }
@@ -1471,6 +1658,13 @@ class TournamentController extends Controller
                 // Gugur murni: slot bracket berasal dari tim terverifikasi
                 $value['matches'] = $this->generateKnockoutBracketFromTeams(
                     $tournament,
+                    (bool) ($value['third_place'] ?? false)
+                );
+            } elseif ($value['competition_type'] === 'group_knockout') {
+                // Grup → Gugur: placeholder posisi grup dgn seeding silang.
+                $value['matches'] = app(MatchGenerator::class)->buildGroupKnockoutStructure(
+                    (int) ($value['group_count'] ?? $tournament->groupSetting->group_count ?? 0),
+                    $tournament->groupSetting->qualified_teams ?? [1, 2],
                     (bool) ($value['third_place'] ?? false)
                 );
             } else {
@@ -1605,7 +1799,7 @@ class TournamentController extends Controller
 
         // Generate expected teams based on current settings
         $expectedTeams = [];
-        if ($competitionType === 'tournament') {
+        if ($competitionType === 'tournament' || $competitionType === 'group_knockout') {
             $expectedTeams = $this->generateQualifiedTeams($tournament, $groupCount, $qualifiedRanks);
         } elseif ($competitionType === 'league') {
             $expectedTeams = $this->generateRelegatedTeams($groupCount, $relegatedRanks);
@@ -1688,6 +1882,14 @@ class TournamentController extends Controller
             // Gugur murni: regenerate slot bracket dari tim terverifikasi
             $matches = $this->generateKnockoutBracketFromTeams(
                 $tournament,
+                isset($validated['third_place'])
+            );
+        } elseif ($competitionType === 'group_knockout') {
+            // Grup → Gugur: placeholder posisi grup dgn seeding silang
+            // juara × runner-up antar grup.
+            $matches = app(MatchGenerator::class)->buildGroupKnockoutStructure(
+                $validated['group_count'],
+                $qualifiedRanks ?: [1, 2],
                 isset($validated['third_place'])
             );
         } else {
@@ -1852,7 +2054,7 @@ class TournamentController extends Controller
     public function updateSettings(Request $request, Tournament $tournament)
     {
         $validated = $request->validate([
-            'competition_type' => 'required|in:tournament,league,league_playoff',
+            'competition_type' => 'required|in:tournament,league,league_playoff,group_knockout',
             'teams_per_group' => 'exclude_if:competition_type,tournament|required|integer|min:2|max:20',
             'group_count' => 'exclude_if:competition_type,tournament|required|integer|min:1|max:32',
             'playoff_type' => 'required_if:competition_type,league_playoff|in:promotion,relegation,both',
@@ -1915,6 +2117,31 @@ class TournamentController extends Controller
                     ])->withInput();
                 }
             }
+        }
+
+        // Grup → Gugur (Euro/UCL/Piala Dunia): butuh fase grup (min 2 grup) dan
+        // ranking yang lolos ke babak gugur. Tidak memakai degradasi.
+        if ($competitionType === 'group_knockout') {
+            $qualified = array_filter($validated['qualified_teams'] ?? []);
+            if (empty($qualified)) {
+                return back()->withErrors([
+                    'qualified_teams' => 'Pilih minimal 1 ranking tim yang lolos ke babak gugur'
+                ])->withInput();
+            }
+
+            if (($validated['group_count'] ?? 1) < 2) {
+                return back()->withErrors([
+                    'group_count' => 'Sistem Grup → Gugur memerlukan minimal 2 grup'
+                ])->withInput();
+            }
+
+            if ($validated['teams_per_group'] < 3) {
+                return back()->withErrors([
+                    'teams_per_group' => 'Sistem Grup → Gugur memerlukan minimal 3 tim per grup'
+                ])->withInput();
+            }
+
+            $validated['relegated_teams'] = [];
         }
 
         // Validasi khusus: Jika sistem liga atau liga playoff dipilih
@@ -2040,6 +2267,20 @@ class TournamentController extends Controller
                 'group_count' => 1,
                 'matches' => $this->generateKnockoutBracketFromTeams($tournament, $thirdPlace),
             ];
+        } elseif ($competitionType === 'group_knockout') {
+            // Grup → Gugur: bracket berisi placeholder posisi grup (A1, B2, ...)
+            // dengan seeding silang juara × runner-up antar grup.
+            $bracketValueToSave = [
+                'match_type' => $matchType,
+                'third_place' => $thirdPlace,
+                'competition_type' => 'group_knockout',
+                'group_count' => $validated['group_count'],
+                'matches' => app(MatchGenerator::class)->buildGroupKnockoutStructure(
+                    $validated['group_count'],
+                    $qualified,
+                    $thirdPlace
+                ),
+            ];
         } elseif ($competitionType === 'league_playoff' && $playoffType === 'both') {
             // For both promotion and relegation, generate separate matches
             $bracketValueToSave = [
@@ -2096,6 +2337,9 @@ class TournamentController extends Controller
         $successMessage = match ($competitionType) {
             'tournament' => 'Pengaturan disimpan! Sistem Turnamen (babak gugur) tidak memakai fase grup — bracket dibuat otomatis dari tim yang lolos verifikasi.',
             'league' => 'Pengaturan disimpan! Sistem Liga tanpa babak gugur. Tim degradasi: ' . ($relegated ? $rankLabels($relegated) : '-') . '.',
+            'group_knockout' => 'Pengaturan disimpan! Sistem Grup → Gugur: fase grup digelar dulu, lalu '
+                . ($qualified ? $rankLabels($qualified) . ' tiap grup lolos ke babak gugur. ' : 'tim yang lolos maju ke babak gugur. ')
+                . 'Bracket terisi otomatis setelah seluruh pertandingan grup selesai.',
             default => 'Pengaturan Liga + Play Off disimpan!'
                 . ($qualified ? ' Play off promosi/juara: ' . $rankLabels($qualified) . '.' : '')
                 . ($relegated ? ' Play off degradasi: ' . $rankLabels($relegated) . '.' : ''),
@@ -2123,6 +2367,7 @@ class TournamentController extends Controller
             ->orderBy('group_label')
             ->orderBy('bracket_match_id')
             ->orderBy('leg')
+            ->orderByRaw("CAST(REGEXP_REPLACE(round_name, '[^0-9]', '') AS UNSIGNED)")
             ->orderBy('round_name')
             ->orderBy('match_date')
             ->orderBy('id');
@@ -2668,12 +2913,14 @@ class TournamentController extends Controller
 
     private function updateStandingsForTournament(Tournament $tournament): void
     {
-        if ($this->isGroupStageComplete($tournament)) {
-            $groups = $this->buildStandingsGroups($tournament);
+        // Bracket diisi progresif per grup (gaya Piala Dunia): begitu seluruh
+        // laga sebuah grup selesai, juara & runner-up grup itu langsung mengisi
+        // slot bracket walau grup lain belum selesai. fillBracketFromFinalStandings
+        // hanya memetakan grup yang sudah selesai sehingga aman dipanggil kapan pun.
+        $groups = $this->buildStandingsGroups($tournament);
 
-            app(\App\Services\MatchGenerator::class)->generateBracketStructureForTournament($tournament);
-            $this->fillBracketFromFinalStandings($tournament, $groups);
-        }
+        app(\App\Services\MatchGenerator::class)->generateBracketStructureForTournament($tournament);
+        $this->fillBracketFromFinalStandings($tournament, $groups);
     }
 
     private function updateBracketForTournament(TournamentMatch $match): void
@@ -2784,6 +3031,34 @@ class TournamentController extends Controller
         return $completedCount >= $groupMatchCount;
     }
 
+    /**
+     * Daftar label grup yang SELURUH pertandingannya sudah full_time. Dipakai
+     * agar bracket terisi progresif per grup (gaya Piala Dunia): begitu sebuah
+     * grup selesai, juara & runner-up grup itu langsung mengisi slot bracket
+     * tanpa menunggu grup lain. Fase reguler bisa berstatus 'group' (multi-grup
+     * dengan label A/B/...) atau 'league' (satu grup, label bisa null → 'A').
+     */
+    private function completedGroupLabels(Tournament $tournament): array
+    {
+        $matches = TournamentMatch::where('tournament_id', $tournament->id)
+            ->whereIn('stage_type', ['group', 'league'])
+            ->get(['group_label', 'status']);
+
+        if ($matches->isEmpty()) {
+            return [];
+        }
+
+        // Kelompokkan per label (laga 'league' tanpa label → 'A', menyamai
+        // keying buildStandingsGroups untuk kompetisi satu grup).
+        $byLabel = $matches->groupBy(fn ($m) => $m->group_label ?: 'A');
+
+        return $byLabel
+            ->filter(fn ($groupMatches) => $groupMatches->every(fn ($m) => $m->status === 'full_time'))
+            ->keys()
+            ->map(fn ($label) => (string) $label)
+            ->all();
+    }
+
     private function fillBracketFromFinalStandings(Tournament $tournament, array $groups): void
     {
         $bracketSetting = $this->resolveBracketSetting($tournament);
@@ -2814,7 +3089,17 @@ class TournamentController extends Controller
         $relegatedRanks = $tournament->groupSetting->relegated_teams ?? [];
         $placeholderMap = [];
 
+        // Hanya petakan grup yang SELURUH lacanya sudah full_time. Dengan begitu
+        // bracket terisi progresif per grup (gaya Piala Dunia) tanpa menunggu
+        // seluruh fase grup beres, dan tanpa salah tebak peringkat saat grup
+        // masih berjalan.
+        $completedGroups = $this->completedGroupLabels($tournament);
+
         foreach ($groups as $groupLabel => $rows) {
+            if (! in_array((string) $groupLabel, $completedGroups, true)) {
+                continue;
+            }
+
             foreach ($qualifiedRanks as $rank) {
                 $teamRow = collect($rows)->first(fn ($row) => $row['ranking'] == $rank);
                 if ($teamRow) {
@@ -2888,6 +3173,87 @@ class TournamentController extends Controller
                 $match->save();
             }
         }
+    }
+
+    /**
+     * Ringkasan skor tiap kartu bracket (key = bracket_match_id) untuk
+     * ditampilkan di bagan gugur. Menangani single leg, Home & Away (2 leg),
+     * dan adu penalti. Memakai TieResolver agar agregat/penalti konsisten dengan
+     * penentuan pemenang.
+     *
+     * Tiap entri: [
+     *   'played' => bool,                 // tie sudah dimainkan tuntas
+     *   'two_leg' => bool,
+     *   'home' => ['score' => int|null, 'pen' => int|null],
+     *   'away' => ['score' => int|null, 'pen' => int|null],   // single/aggregate
+     *   'legs' => [ ['home'=>int|null,'away'=>int|null], ... ],// urut leg 1..2
+     *   'winner_side' => 'home'|'away'|null,
+     * ]
+     */
+    private function buildBracketScoreSummaries(Tournament $tournament, ?string $playoffMode = null): array
+    {
+        $stageTypes = $playoffMode === null
+            ? ['knockout', 'promotion_playoff', 'relegation_playoff']
+            : [$playoffMode === 'relegation' ? 'relegation_playoff' : 'promotion_playoff'];
+
+        $matches = TournamentMatch::with(['homeTeam.team', 'awayTeam.team'])
+            ->where('tournament_id', $tournament->id)
+            ->whereIn('stage_type', $stageTypes)
+            ->whereNotNull('bracket_match_id')
+            ->get();
+
+        if ($matches->isEmpty()) {
+            return [];
+        }
+
+        $tieResolver = app(TieResolver::class);
+        $mode = $tieResolver->calculationMode($tournament);
+        $summaries = [];
+
+        // Kelompokkan per (stage_type, bracket_match_id); satu tie bisa 1 row
+        // (single) atau 2 row (Home & Away). Pakai deciding match sebagai dasar.
+        foreach ($matches->groupBy(fn ($m) => $m->stage_type . '#' . $m->bracket_match_id) as $rows) {
+            $deciding = $rows->firstWhere('leg', 2) ?? $rows->firstWhere('leg', null) ?? $rows->first();
+            if (! $deciding) {
+                continue;
+            }
+
+            $bracketId = $deciding->bracket_match_id;
+            $isTwoLeg = $rows->contains(fn ($m) => $m->leg !== null);
+            $leg1 = $isTwoLeg ? $rows->firstWhere('leg', 1) : null;
+
+            $outcome = $tieResolver->tieOutcome($deciding, $mode, $matches);
+
+            // Susun skor per leg sesuai orientasi kartu (home/away kartu = home/away
+            // leg 1; pada leg 2 sisi dibalik sehingga kita normalkan ke orientasi tie).
+            $legs = [];
+            if ($isTwoLeg) {
+                if ($leg1) {
+                    $legs[] = ['home' => $leg1->home_score, 'away' => $leg1->away_score];
+                }
+                // Leg 2: home kartu = away leg 2 (tim yang sama). Balik agar konsisten
+                // dengan orientasi Tim 1/Tim 2 pada kartu.
+                $legs[] = ['home' => $deciding->away_score, 'away' => $deciding->home_score];
+            }
+
+            $summaries[$bracketId] = [
+                'played' => (bool) $outcome['both_played'],
+                'two_leg' => $isTwoLeg,
+                'home' => [
+                    'score' => $isTwoLeg ? $outcome['agg_home'] : $deciding->home_score,
+                    'pen' => $outcome['pen_home'],
+                ],
+                'away' => [
+                    'score' => $isTwoLeg ? $outcome['agg_away'] : $deciding->away_score,
+                    'pen' => $outcome['pen_away'],
+                ],
+                'legs' => $legs,
+                'pen_decides' => (bool) $outcome['pen_decides'],
+                'winner_side' => $outcome['winner_side'],
+            ];
+        }
+
+        return $summaries;
     }
 
     private function updatePlayoffIfNeeded(Tournament $tournament): void
