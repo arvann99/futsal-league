@@ -35,6 +35,15 @@ class MatchGenerator
                 $matches,
                 $this->buildKnockoutMatchesFromTeams($tournament, $bracketSetting)
             );
+        } elseif ($competitionType === 'group_knockout') {
+            // Mode Grup → Gugur (gaya Euro/UCL/Piala Dunia): fase grup
+            // round-robin per grup, lalu bracket gugur berisi placeholder
+            // (mis. A1, B2) yang akan diisi tim asli setelah fase grup selesai.
+            $matches = array_merge(
+                $matches,
+                $this->buildGroupStageMatches($tournament),
+                $this->buildGroupKnockoutBracket($tournament, $bracketSetting)
+            );
         } elseif ($competitionType === 'league') {
             $matches = array_merge(
                 $matches,
@@ -152,7 +161,9 @@ class MatchGenerator
         $bracketValue = $bracketSetting->value ?? [];
         $competitionType = $bracketValue['competition_type'] ?? 'tournament';
 
-        if ($competitionType !== 'tournament') {
+        // Untuk group_knockout, bracket (placeholder A1/B2/...) sudah dibangun
+        // saat generateForTournament(); di sini tinggal di-skip karena sudah ada.
+        if (! in_array($competitionType, ['tournament', 'group_knockout'], true)) {
             return;
         }
 
@@ -210,13 +221,219 @@ class MatchGenerator
             return [];
         }
 
-        return $this->buildRoundRobinMatchRows(
+        $rows = $this->buildRoundRobinMatchRows(
             $tournament,
             $teamDescriptors,
             'league',
             'League',
             'Matchday'
         );
+
+        // R11 — Kompetisi penuh (double round robin / kandang-tandang):
+        // mainkan setiap pasangan dua kali, putaran kedua membalik home/away.
+        // Penomoran Matchday melanjutkan dari putaran pertama.
+        $roundType = $tournament->groupSetting->league_round_type ?? 'single';
+        if ($roundType === 'double') {
+            $firstLegRoundCount = $this->countMatchdays($rows);
+            $rows = array_merge($rows, $this->buildReversedLeg($rows, $firstLegRoundCount));
+        }
+
+        return $rows;
+    }
+
+    /**
+     * Mode Grup → Gugur: round-robin per grup (stage_type 'group'). Tim
+     * dikelompokkan berdasarkan group_label yang sudah ditetapkan (manual /
+     * undian) pada tournament_teams. Tiap grup memakai prefix Matchday sendiri,
+     * dan menghormati league_round_type (single/double) seperti mode liga.
+     */
+    private function buildGroupStageMatches(Tournament $tournament): array
+    {
+        $tournament->load(['tournamentTeams.team']);
+
+        $teamsByGroup = $tournament->tournamentTeams
+            ->filter(fn ($team) => ($team->team?->verification_status ?? 'pending') === 'approved')
+            ->filter(fn ($team) => ! empty($team->group_label))
+            ->sortBy(fn ($team) => $team->seed ?? 0)
+            ->groupBy('group_label');
+
+        $roundType = $tournament->groupSetting->league_round_type ?? 'single';
+        $rows = [];
+
+        foreach ($teamsByGroup->sortKeys() as $groupLabel => $groupTeams) {
+            $teamDescriptors = $groupTeams->map(fn ($tt) => [
+                'id' => $tt->id,
+                'key' => $tt->team?->name ?? ('Tim ' . $tt->id),
+            ])->values()->all();
+
+            if (count($teamDescriptors) < 2) {
+                continue;
+            }
+
+            $groupRows = $this->buildRoundRobinMatchRows(
+                $tournament,
+                $teamDescriptors,
+                'group',
+                (string) $groupLabel,
+                'Matchday'
+            );
+
+            if ($roundType === 'double') {
+                $firstLegRoundCount = $this->countMatchdays($groupRows);
+                $groupRows = array_merge($groupRows, $this->buildReversedLeg($groupRows, $firstLegRoundCount));
+            }
+
+            $rows = array_merge($rows, $groupRows);
+        }
+
+        return $rows;
+    }
+
+    /**
+     * Mode Grup → Gugur: bangun bracket gugur berisi placeholder posisi grup
+     * (A1, B2, ...) memakai seeding silang juara × runner-up antar grup —
+     * sehingga Juara Grup A bertemu Runner-up Grup B, dst. Struktur disimpan ke
+     * pengaturan bracket agar halaman bracket menampilkan bagan yang sama.
+     */
+    private function buildGroupKnockoutBracket(Tournament $tournament, AppSetting $bracketSetting): array
+    {
+        $bracketValue = $bracketSetting->value ?? [];
+        $groupCount = (int) ($tournament->groupSetting->group_count ?? 0);
+        $qualifiedRanks = $tournament->groupSetting->qualified_teams ?? [1, 2];
+
+        $structure = $this->buildGroupKnockoutStructure(
+            $groupCount,
+            $qualifiedRanks,
+            (bool) ($bracketValue['third_place'] ?? false)
+        );
+
+        if (($bracketValue['matches'] ?? []) !== $structure) {
+            $bracketValue['matches'] = $structure;
+            $bracketSetting->update(['value' => $bracketValue]);
+        }
+
+        if (empty($structure)) {
+            return [];
+        }
+
+        return $this->buildBracketMatchesFromArray(
+            $tournament,
+            $structure,
+            'knockout',
+            null,
+            $bracketValue['match_type'] ?? 'single'
+        );
+    }
+
+    /**
+     * Urutan placeholder posisi grup untuk bracket gugur dengan seeding silang
+     * juara × runner-up (gaya Euro/Piala Dunia). Saat tiap grup meloloskan 2
+     * tim (juara peringkat 1 & runner-up peringkat 2), juara grup ditempatkan
+     * berurutan lalu disilangkan dengan runner-up grup pasangannya:
+     * A1, B2, C1, D2, B1, A2, D1, C2, ... sehingga pasangan ronde pertama tidak
+     * mempertemukan dua tim dari grup yang sama. Untuk jumlah lolos selain 2 per
+     * grup, kembali ke urutan ranking standar (A1,A2,B1,B2,...).
+     */
+    private function crossGroupSeedPositions(int $groupCount, array $qualifiedRanks): array
+    {
+        $groupLabels = array_slice(
+            ['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P'],
+            0,
+            max(0, $groupCount)
+        );
+
+        $ranks = array_values(array_unique(array_map('intval', $qualifiedRanks)));
+        sort($ranks);
+
+        // Pola silang hanya berlaku rapi untuk tepat 2 tim lolos per grup dan
+        // jumlah grup genap. Selain itu pakai urutan ranking standar.
+        if ($ranks !== [1, 2] || $groupCount < 2 || $groupCount % 2 !== 0) {
+            $positions = [];
+            foreach ($groupLabels as $group) {
+                foreach ($ranks as $rank) {
+                    $positions[] = $group . $rank;
+                }
+            }
+
+            return $positions;
+        }
+
+        // Pasangkan grup berurutan: (A,B), (C,D), ... lalu silangkan.
+        $positions = [];
+        for ($i = 0; $i < $groupCount; $i += 2) {
+            $first = $groupLabels[$i];
+            $second = $groupLabels[$i + 1];
+
+            $positions[] = $first . '1';   // Juara grup pertama
+            $positions[] = $second . '2';  // Runner-up grup kedua
+            $positions[] = $second . '1';  // Juara grup kedua
+            $positions[] = $first . '2';   // Runner-up grup pertama
+        }
+
+        return $positions;
+    }
+
+    /**
+     * Struktur bracket Grup → Gugur (placeholder posisi grup A1/B2/...) dengan
+     * seeding silang juara × runner-up. Dipakai controller saat menyimpan
+     * pengaturan bracket maupun saat (re)generasi match.
+     */
+    public function buildGroupKnockoutStructure(int $groupCount, array $qualifiedRanks, bool $includeThirdPlace = false): array
+    {
+        $positions = $this->crossGroupSeedPositions($groupCount, $qualifiedRanks);
+
+        if (count($positions) < 2) {
+            return [];
+        }
+
+        return $this->buildBracketStructure(
+            $positions,
+            $includeThirdPlace,
+            true // preseeded: jaga urutan silang juara × runner-up
+        );
+    }
+
+    /**
+     * Hitung jumlah Matchday unik pada putaran pertama agar penomoran putaran
+     * kedua menyambung (Matchday N+1, N+2, ...).
+     */
+    private function countMatchdays(array $rows): int
+    {
+        $names = [];
+        foreach ($rows as $row) {
+            $names[$row['round_name']] = true;
+        }
+
+        return count($names);
+    }
+
+    /**
+     * Bangun putaran kedua double round robin: home/away dibalik dan Matchday
+     * dilanjutkan dari putaran pertama.
+     */
+    private function buildReversedLeg(array $firstLegRows, int $offset): array
+    {
+        $reversed = [];
+
+        foreach ($firstLegRows as $row) {
+            // Geser nomor Matchday: "Matchday 1" -> "Matchday (offset+1)".
+            $newRoundName = $row['round_name'];
+            if (preg_match('/^(.*?)(\d+)$/', $row['round_name'], $m)) {
+                $newRoundName = $m[1] . ((int) $m[2] + $offset);
+            }
+
+            $reversed[] = array_merge($row, [
+                'round_name' => $newRoundName,
+                'home_team_id' => $row['away_team_id'],
+                'away_team_id' => $row['home_team_id'],
+                'home_team_key' => $row['away_team_key'],
+                'away_team_key' => $row['home_team_key'],
+                'source_home' => $row['source_away'],
+                'source_away' => $row['source_home'],
+            ]);
+        }
+
+        return $reversed;
     }
 
     private function buildPlayoffMatches(Tournament $tournament, array $bracketValue, string $playoffType): array
@@ -397,8 +614,13 @@ class MatchGenerator
      * Bangun struktur bracket gugur dari daftar posisi/nama tim ($positions),
      * memakai seeding bracket standar. Posisi bisa berupa placeholder ("A1")
      * maupun nama tim asli (mode turnamen tanpa grup).
+     *
+     * Bila $preseeded = true, $positions dianggap sudah dalam urutan slot final
+     * (pasangan ronde pertama = posisi 0×1, 2×3, ...) dan reorder seeding standar
+     * dilewati. Dipakai mode Grup → Gugur agar pasangan silang juara × runner-up
+     * antar grup tidak diacak ulang.
      */
-    public function buildBracketStructure(array $positions, bool $includeThirdPlace = false): array
+    public function buildBracketStructure(array $positions, bool $includeThirdPlace = false, bool $preseeded = false): array
     {
         $positions = array_values($positions);
         $teamCount = count($positions);
@@ -416,11 +638,18 @@ class MatchGenerator
         // bye akan jatuh pada lawan seed teratas — sehingga seed teratas yang
         // melewati ronde pertama (mis. 3 tim: seed 1 langsung ke Final,
         // seed 2 vs seed 3 di Semifinal).
-        $seedOrder = $this->bracketSeedOrder($slotCount);
         $slots = array_fill(0, $slotCount, 'Bye');
-        foreach ($seedOrder as $slotIndex => $seedNumber) {
-            if ($seedNumber <= $teamCount) {
-                $slots[$slotIndex] = $positions[$seedNumber - 1];
+        if ($preseeded) {
+            // Pertahankan urutan apa adanya: slot[i] = positions[i].
+            foreach ($positions as $slotIndex => $position) {
+                $slots[$slotIndex] = $position;
+            }
+        } else {
+            $seedOrder = $this->bracketSeedOrder($slotCount);
+            foreach ($seedOrder as $slotIndex => $seedNumber) {
+                if ($seedNumber <= $teamCount) {
+                    $slots[$slotIndex] = $positions[$seedNumber - 1];
+                }
             }
         }
 

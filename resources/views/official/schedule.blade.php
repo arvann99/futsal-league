@@ -92,6 +92,7 @@
                             <button type="submit" name="filter" value="all" class="rounded-3xl px-4 py-3 text-sm font-semibold {{ $filter === 'all' ? 'bg-violet-500 text-white' : 'bg-slate-950 text-slate-300 hover:bg-slate-900' }}">Semua</button>
                             <button type="submit" name="filter" value="upcoming" class="rounded-3xl px-4 py-3 text-sm font-semibold {{ $filter === 'upcoming' ? 'bg-violet-500 text-white' : 'bg-slate-950 text-slate-300 hover:bg-slate-900' }}">Akan Datang</button>
                             <button type="submit" name="filter" value="finished" class="rounded-3xl px-4 py-3 text-sm font-semibold {{ $filter === 'finished' ? 'bg-violet-500 text-white' : 'bg-slate-950 text-slate-300 hover:bg-slate-900' }}">Selesai</button>
+                            <button type="submit" name="filter" value="tbd" class="rounded-3xl px-4 py-3 text-sm font-semibold {{ $filter === 'tbd' ? 'bg-violet-500 text-white' : 'bg-slate-950 text-slate-300 hover:bg-slate-900' }}">Belum Dijadwalkan</button>
                         </form>
                     </div>
 
@@ -125,8 +126,13 @@
                                     <div class="mt-5 grid gap-4 sm:grid-cols-2">
                                         <div class="rounded-3xl bg-slate-900 p-4">
                                             <p class="text-xs uppercase tracking-[0.35em] text-slate-500">Tanggal</p>
-                                            <p class="mt-2 text-lg font-semibold text-white">{{ optional($match->match_date)->format('d M Y') }}</p>
-                                            <p class="text-sm text-slate-400">{{ optional($match->match_date)->format('H:i') }}</p>
+                                            @if($match->match_date)
+                                                <p class="mt-2 text-lg font-semibold text-white">{{ $match->match_date->format('d M Y') }}</p>
+                                                <p class="text-sm text-slate-400">{{ $match->match_date->format('H:i') }}</p>
+                                            @else
+                                                <p class="mt-2 text-lg font-semibold text-amber-300">Belum dijadwalkan</p>
+                                                <p class="text-sm text-slate-400">Menunggu jadwal dari panitia</p>
+                                            @endif
                                         </div>
                                         <div class="rounded-3xl bg-slate-900 p-4">
                                             <p class="text-xs uppercase tracking-[0.35em] text-slate-500">Skor</p>

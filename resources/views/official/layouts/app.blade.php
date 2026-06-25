@@ -39,6 +39,21 @@
         </header>
 
         <main class="max-w-6xl mx-auto px-4 py-6">
+            @if(session('error'))
+                <div class="mb-4 rounded-2xl border border-rose-500/30 bg-rose-900/20 p-4 text-sm text-rose-200">
+                    {{ session('error') }}
+                </div>
+            @endif
+            @if(session('success'))
+                <div class="mb-4 rounded-2xl border border-emerald-500/30 bg-emerald-900/20 p-4 text-sm text-emerald-200">
+                    {{ session('success') }}
+                </div>
+            @endif
+            @if(isset($team) && ($team->verification_status ?? 'pending') === 'approved' && (request()->routeIs('official.players.*') || request()->routeIs('official.officials.*')))
+                <div class="mb-4 rounded-2xl border border-amber-500/30 bg-amber-900/20 p-4 text-sm text-amber-200">
+                    🔒 Data tim Anda sudah <strong>diverifikasi</strong> oleh panitia dan dikunci. Penambahan/perubahan pemain & ofisial dinonaktifkan.
+                </div>
+            @endif
             @yield('content')
         </main>
     </div>

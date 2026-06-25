@@ -22,6 +22,27 @@
             </div>
         @endif
 
+        @if(session('error'))
+            <div class="mb-6 rounded-xl bg-rose-900/20 border border-rose-500/30 p-4 text-rose-200">
+                {{ session('error') }}
+            </div>
+        @endif
+
+        @if($usesGroups)
+            @php
+                $capacity = ($tournament->groupSetting->group_count ?? 0) * ($tournament->groupSetting->teams_per_group ?? 0);
+                $current = $participants->count();
+                $pct = $capacity > 0 ? ($current / $capacity) : 0;
+            @endphp
+            <div class="mb-6 rounded-xl border p-4 {{ $current > $capacity ? 'bg-rose-900/20 border-rose-500/30 text-rose-200' : ($pct >= 0.8 ? 'bg-amber-900/20 border-amber-500/30 text-amber-200' : 'bg-slate-900/60 border-slate-800 text-slate-300') }}">
+                <span class="font-semibold">Kapasitas Grup:</span> {{ $current }} / {{ $capacity }} slot
+                ({{ $tournament->groupSetting->group_count }} grup × {{ $tournament->groupSetting->teams_per_group }} tim per grup)
+                @if($current > $capacity)
+                    — <span class="font-semibold">melebihi kapasitas!</span> Ubah pengaturan grup atau kurangi peserta.
+                @endif
+            </div>
+        @endif
+
         @if($participants->isEmpty())
             <div class="rounded-3xl border border-slate-800 bg-slate-900/70 p-10 text-center">
                 <p class="text-slate-400 mb-3">Belum ada peserta terdaftar untuk turnamen ini.</p>
@@ -36,6 +57,10 @@
                             <th class="px-5 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Nama Tim</th>
                             <th class="px-5 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Kota</th>
                             <th class="px-5 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Negara</th>
+                            @if($usesGroups)
+                                <th class="px-5 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Grup</th>
+                            @endif
+                            <th class="px-5 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Pemain</th>
                             <th class="px-5 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Manager Token</th>
                             <th class="px-5 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Status Verifikasi</th>
                             <th class="px-5 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Aksi</th>
@@ -48,6 +73,31 @@
                                 <td class="px-5 py-4 text-sm text-white">{{ $participant->team->name }}</td>
                                 <td class="px-5 py-4 text-sm text-slate-300">{{ $participant->team->city ?? '-' }}</td>
                                 <td class="px-5 py-4 text-sm text-slate-300">{{ $participant->team->country ?? 'Indonesia' }}</td>
+                                @if($usesGroups)
+                                    <td class="px-5 py-4 text-sm text-slate-300">
+                                        <form action="{{ route('tournaments.participants.assignGroup', [$tournament, $participant]) }}" method="POST" class="inline-flex items-center gap-1">
+                                            @csrf
+                                            @method('PATCH')
+                                            <select name="group_label" onchange="this.form.submit()" class="rounded-lg bg-slate-800 border border-slate-700 text-slate-200 text-sm px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                                                <option value="">—</option>
+                                                @foreach($groupLabels as $g)
+                                                    <option value="{{ $g }}" {{ $participant->group_label === $g ? 'selected' : '' }}>Grup {{ $g }}</option>
+                                                @endforeach
+                                            </select>
+                                            @if($participant->group_assigned_manually)
+                                                <span title="Grup ditetapkan manual / hasil undian — tidak akan ditimpa auto" class="text-amber-400 text-xs">🔒</span>
+                                            @endif
+                                        </form>
+                                    </td>
+                                @endif
+                                <td class="px-5 py-4 text-sm text-slate-300">
+                                    <button type="button" onclick="togglePlayers({{ $index }})" class="inline-flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-200 text-xs font-medium transition">
+                                        {{ $participant->players->count() }} Pemain
+                                        <svg id="arrow-{{ $index }}" class="w-3 h-3 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                                        </svg>
+                                    </button>
+                                </td>
                                 <td class="px-5 py-4 text-sm text-slate-300 break-all">{{ $participant->team->manager_token ?? 'N/A' }}</td>
                                 <td class="px-5 py-4 text-sm text-slate-300">
                                     <span class="inline-flex rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] {{ $participant->team->verification_status === 'approved' ? 'bg-emerald-700 text-emerald-200' : ($participant->team->verification_status === 'rejected' ? 'bg-rose-700 text-rose-200' : 'bg-slate-700 text-slate-200') }}">
@@ -68,6 +118,39 @@
                                     </form>
                                 </td>
                             </tr>
+                            <tr id="players-{{ $index }}" class="hidden bg-slate-950/60">
+                                <td colspan="{{ $usesGroups ? 8 : 7 }}" class="px-5 py-4">
+                                    <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Daftar Pemain ({{ $participant->players->count() }})</p>
+                                    @if($participant->players->isEmpty())
+                                        <p class="text-sm text-slate-500 italic">Belum ada pemain terdaftar. Manager mengisi pemain lewat portal official.</p>
+                                    @else
+                                        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                                            @foreach($participant->players->sortBy('shirt_number') as $player)
+                                                @php $stat = $playerStats[$player->id] ?? null; @endphp
+                                                <div class="flex items-center gap-3 p-2 bg-slate-900/50 rounded-lg border border-slate-800">
+                                                    @if($player->photo)
+                                                        <img src="{{ asset('storage/' . $player->photo) }}" alt="{{ $player->player_name }}" class="w-8 h-8 rounded-full object-cover bg-slate-800">
+                                                    @else
+                                                        <div class="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-slate-400 text-xs font-bold">{{ substr($player->player_name, 0, 1) }}</div>
+                                                    @endif
+                                                    <div class="flex-1 min-w-0">
+                                                        <p class="text-sm font-medium text-white truncate">{{ $player->player_name }} {{ $player->is_captain ? '(C)' : '' }}</p>
+                                                        <p class="text-xs text-slate-400">#{{ $player->shirt_number ?? '-' }} | {{ $player->dominant_position ?? '-' }}</p>
+                                                        <p class="mt-0.5 text-[11px] text-slate-300 flex items-center gap-2">
+                                                            <span title="Gol">⚽ {{ (int) ($stat->goals ?? 0) }}</span>
+                                                            <span title="Kartu kuning">🟨 {{ (int) ($stat->yellow_cards ?? 0) }}</span>
+                                                            <span title="Kartu merah">🟥 {{ (int) ($stat->red_cards ?? 0) }}</span>
+                                                        </p>
+                                                    </div>
+                                                    <span class="inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium {{ $player->status === 'active' ? 'bg-emerald-700/40 text-emerald-200' : 'bg-slate-700 text-slate-300' }}">
+                                                        {{ ucfirst($player->status ?? 'active') }}
+                                                    </span>
+                                                </div>
+                                            @endforeach
+                                        </div>
+                                    @endif
+                                </td>
+                            </tr>
                         @endforeach
                     </tbody>
                 </table>
@@ -75,3 +158,35 @@
         @endif
     </div>
 @endsection
+
+@push('scripts')
+<script>
+    function togglePlayers(index) {
+        const row = document.getElementById('players-' + index);
+        const arrow = document.getElementById('arrow-' + index);
+        if (!row) return;
+        if (row.classList.contains('hidden')) {
+            row.classList.remove('hidden');
+            arrow && arrow.classList.add('rotate-180');
+        } else {
+            row.classList.add('hidden');
+            arrow && arrow.classList.remove('rotate-180');
+        }
+    }
+
+    function copyToken(token) {
+        if (!token) {
+            alert('Token belum tersedia.');
+            return;
+        }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(token).then(
+                () => alert('Token manager disalin ke clipboard.'),
+                () => window.prompt('Salin token manager:', token)
+            );
+        } else {
+            window.prompt('Salin token manager:', token);
+        }
+    }
+</script>
+@endpush

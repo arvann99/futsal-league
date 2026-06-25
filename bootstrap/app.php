@@ -11,7 +11,12 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        //
+        // R21 — alias middleware kepemilikan turnamen/tim per admin.
+        // R22 — alias middleware admin root (ACC pembayaran).
+        $middleware->alias([
+            'owns' => \App\Http\Middleware\EnsureResourceOwnership::class,
+            'root' => \App\Http\Middleware\EnsureRoot::class,
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //

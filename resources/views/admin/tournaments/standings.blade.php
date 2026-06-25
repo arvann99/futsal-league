@@ -41,7 +41,11 @@
 
                 <!-- Groups Grid -->
                 @if(($setting->group_count ?? 0) > 0)
-                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    @php
+                        // Satu grup (mis. Liga) tampil full-width; >1 grup tampil 2 kolom.
+                        $groupGridCols = ($setting->group_count ?? 0) <= 1 ? 'grid-cols-1' : 'grid-cols-1 lg:grid-cols-2';
+                    @endphp
+                    <div class="grid {{ $groupGridCols }} gap-6">
                         @php
                             $groupLetters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
                         @endphp
@@ -232,16 +236,15 @@
                         </div>
                     </div>
                 @else
-                    <!-- League Mode: Categories Summary -->
-                    <div class="mt-8 space-y-6">
+                    <!-- League Mode: Categories Summary (berdampingan) -->
+                    <div class="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                         <!-- Champions -->
-                        <div class="bg-slate-900 rounded-xl border border-slate-800 p-6">
-                            <h3 class="text-lg font-bold text-white mb-4 flex items-center gap-2">
-                                <span class="text-2xl">👑</span>
+                        <div class="bg-slate-900 rounded-xl border border-slate-800 p-5">
+                            <h3 class="text-base font-bold text-white mb-3 flex items-center gap-2">
+                                <span class="text-xl">👑</span>
                                 <span>Champions</span>
-                                <span class="ml-auto inline-flex items-center gap-1 px-3 py-1 bg-yellow-600/30 text-yellow-300 text-xs font-semibold rounded">EMAS</span>
                             </h3>
-                            <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                            <div class="space-y-2">
                                 @php $found = false; @endphp
                                 @foreach($groups as $groupName => $teamsList)
                                     @foreach($teamsList as $team)
@@ -255,19 +258,18 @@
                                     @endforeach
                                 @endforeach
                                 @if(!$found)
-                                    <p class="col-span-full text-sm text-slate-400 py-4">Tidak ada data</p>
+                                    <p class="text-sm text-slate-400 py-2">Tidak ada data</p>
                                 @endif
                             </div>
                         </div>
 
                         <!-- Runner-up -->
-                        <div class="bg-slate-900 rounded-xl border border-slate-800 p-6">
-                            <h3 class="text-lg font-bold text-white mb-4 flex items-center gap-2">
-                                <span class="text-2xl">🥈</span>
+                        <div class="bg-slate-900 rounded-xl border border-slate-800 p-5">
+                            <h3 class="text-base font-bold text-white mb-3 flex items-center gap-2">
+                                <span class="text-xl">🥈</span>
                                 <span>Runner-up</span>
-                                <span class="ml-auto inline-flex items-center gap-1 px-3 py-1 bg-gray-600/30 text-gray-300 text-xs font-semibold rounded">SILVER</span>
                             </h3>
-                            <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                            <div class="space-y-2">
                                 @php $found = false; @endphp
                                 @foreach($groups as $groupName => $teamsList)
                                     @foreach($teamsList as $team)
@@ -281,19 +283,18 @@
                                     @endforeach
                                 @endforeach
                                 @if(!$found)
-                                    <p class="col-span-full text-sm text-slate-400 py-4">Tidak ada data</p>
+                                    <p class="text-sm text-slate-400 py-2">Tidak ada data</p>
                                 @endif
                             </div>
                         </div>
 
                         <!-- Third Place -->
-                        <div class="bg-slate-900 rounded-xl border border-slate-800 p-6">
-                            <h3 class="text-lg font-bold text-white mb-4 flex items-center gap-2">
-                                <span class="text-2xl">🥉</span>
+                        <div class="bg-slate-900 rounded-xl border border-slate-800 p-5">
+                            <h3 class="text-base font-bold text-white mb-3 flex items-center gap-2">
+                                <span class="text-xl">🥉</span>
                                 <span>Third Place</span>
-                                <span class="ml-auto inline-flex items-center gap-1 px-3 py-1 bg-orange-600/30 text-orange-300 text-xs font-semibold rounded">COKLAT</span>
                             </h3>
-                            <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                            <div class="space-y-2">
                                 @php $found = false; @endphp
                                 @foreach($groups as $groupName => $teamsList)
                                     @foreach($teamsList as $team)
@@ -307,20 +308,20 @@
                                     @endforeach
                                 @endforeach
                                 @if(!$found)
-                                    <p class="col-span-full text-sm text-slate-400 py-4">Tidak ada data</p>
+                                    <p class="text-sm text-slate-400 py-2">Tidak ada data</p>
                                 @endif
                             </div>
                         </div>
 
                         <!-- Relegation -->
-                        @if(!empty($setting->relegated_teams))
-                            <div class="bg-slate-900 rounded-xl border border-slate-800 p-6">
-                                <h3 class="text-lg font-bold text-white mb-4 flex items-center gap-2">
-                                    <span class="text-2xl">↓</span>
-                                    <span>Relegation</span>
-                                    <span class="ml-auto inline-flex items-center gap-1 px-3 py-1 bg-red-600/30 text-red-300 text-xs font-semibold rounded">MERAH</span>
-                                </h3>
-                                <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                        <div class="bg-slate-900 rounded-xl border border-slate-800 p-5">
+                            <h3 class="text-base font-bold text-white mb-3 flex items-center gap-2">
+                                <span class="text-xl">↓</span>
+                                <span>Relegation</span>
+                            </h3>
+                            <div class="space-y-2">
+                                @php $found = false; @endphp
+                                @if(!empty($setting->relegated_teams))
                                     @foreach($groups as $groupName => $teamsList)
                                         @foreach($teamsList as $team)
                                             @if(in_array($team['ranking'], $setting->relegated_teams))
@@ -328,12 +329,16 @@
                                                     <p class="text-sm font-semibold text-red-300">{{ $team['name'] }}</p>
                                                     <p class="text-xs text-red-200">Grup {{ $groupName }} - Ranking {{ $team['ranking'] }}</p>
                                                 </div>
+                                                @php $found = true; @endphp
                                             @endif
                                         @endforeach
                                     @endforeach
-                                </div>
+                                @endif
+                                @if(!$found)
+                                    <p class="text-sm text-slate-400 py-2">Tidak ada degradasi</p>
+                                @endif
                             </div>
-                        @endif
+                        </div>
                     </div>
                 @endif
 

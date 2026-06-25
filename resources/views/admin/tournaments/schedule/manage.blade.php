@@ -162,6 +162,10 @@
 
                                 <div class="text-center">
                                     <span class="text-slate-500 font-semibold uppercase">VS</span>
+                                    <div id="loggerAggregateScore" class="hidden mt-2">
+                                        <p class="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Agregat</p>
+                                        <p id="loggerAggregateText" class="text-sm font-bold text-sky-300 mt-0.5"></p>
+                                    </div>
                                 </div>
 
                                 <div class="flex-1 text-center">
@@ -267,6 +271,8 @@
             const homeCardsLabel = document.getElementById('loggerHomeCards');
             const awayCardsLabel = document.getElementById('loggerAwayCards');
             const tieContextPanel = document.getElementById('loggerTieContext');
+            const aggregateScoreBox = document.getElementById('loggerAggregateScore');
+            const aggregateScoreText = document.getElementById('loggerAggregateText');
             const statusLabel = document.getElementById('loggerMatchStatus');
             const datetimeLabel = document.getElementById('loggerMatchDateTime');
             const titleLabel = document.getElementById('loggerMatchTitle');
@@ -290,7 +296,7 @@
                 penalty_miss: 'Penalti Gagal',
             };
 
-            function createEventButton(type, side, playerName, disabled) {
+            function createEventButton(type, side, playerName, disabled, playerId) {
                 const button = document.createElement('button');
                 button.type = 'button';
                 button.className = 'rounded-lg px-2.5 py-1 text-[11px] font-medium text-white transition hover:opacity-90';
@@ -320,7 +326,7 @@ else if (type === 'penalty_miss') {
                 }
 
                 button.addEventListener('click', function () {
-                    submitLiveEvent(type, side, playerName);
+                    submitLiveEvent(type, side, playerName, playerId);
                 });
 
                 return button;
@@ -341,7 +347,7 @@ else if (type === 'penalty_miss') {
                 loggerFlash.classList.remove('hidden');
             }
 
-            async function submitLiveEvent(type, side, playerName) {
+            async function submitLiveEvent(type, side, playerName, playerId) {
                 if (eventSubmitPending) {
                     return;
                 }
@@ -350,6 +356,16 @@ else if (type === 'penalty_miss') {
                 showLoggerFlash('');
 
                 try {
+                    const bodyParams = {
+                        event_type: type,
+                        team_side: side,
+                        player_name: playerName || '',
+                    };
+                    // R19 — sertakan player_id bila roster punya pemain asli.
+                    if (playerId !== null && playerId !== undefined && playerId !== '') {
+                        bodyParams.player_id = playerId;
+                    }
+
                     const response = await fetch(eventForm.action, {
                         method: 'POST',
                         headers: {
@@ -358,11 +374,7 @@ else if (type === 'penalty_miss') {
                             'X-Requested-With': 'XMLHttpRequest',
                             'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
                         },
-                        body: new URLSearchParams({
-                            event_type: type,
-                            team_side: side,
-                            player_name: playerName || '',
-                        }).toString(),
+                        body: new URLSearchParams(bodyParams).toString(),
                     });
 
                     const data = await response.json().catch(() => ({}));
@@ -394,6 +406,20 @@ else if (type === 'penalty_miss') {
                 }
 
                 renderLoggerView(freshLeg);
+            }
+
+            // Rekap penalti per pemain: { 'NamaPemain': 'goal'|'miss' }
+            function buildPenaltySummary(events) {
+                const summary = { home: {}, away: {} };
+                (events || []).forEach(event => {
+                    if (event.event_type !== 'penalty_goal' && event.event_type !== 'penalty_miss') return;
+                    const side = event.team_side === 'home' ? 'home' : 'away';
+                    const key = event.player_name || '';
+                    if (!summary[side][key]) {
+                        summary[side][key] = event.event_type === 'penalty_goal' ? 'goal' : 'miss';
+                    }
+                });
+                return summary;
             }
 
             // Rekap kartu per tim & per pemain dari timeline event
@@ -437,7 +463,7 @@ else if (type === 'penalty_miss') {
                 element.classList.toggle('hidden', parts.length === 0);
             }
 
-            function renderRosterPanel(panel, side, roster, disabled, eventTypes, playerCards) {
+            function renderRosterPanel(panel, side, roster, disabled, eventTypes, playerCards, penaltyTaken) {
                 panel.innerHTML = '';
                 if (!roster || roster.length === 0) {
                     panel.innerHTML = '<p class="text-sm text-slate-500">Roster tidak tersedia.</p>';
@@ -446,10 +472,14 @@ else if (type === 'penalty_miss') {
 
                 const types = eventTypes || ['goal', 'own_goal', 'yellow_card', 'red_card'];
                 const cards = playerCards || {};
+                const penalties = penaltyTaken || {};
+                const isShootoutMode = types.includes('penalty_goal');
 
                 roster.forEach(player => {
                     const cardInfo = cards[player.player_name || ''] || { yellow: 0, red: 0 };
                     const sentOff = cardInfo.red > 0;
+                    const penaltyResult = penalties[player.player_name || ''] ?? null; // 'goal'|'miss'|null
+                    const hasTakenPenalty = penaltyResult !== null;
 
                     let badges = '';
                     if (cardInfo.yellow > 0) {
@@ -459,22 +489,47 @@ else if (type === 'penalty_miss') {
                         badges += ' <span title="Kartu merah">🟥</span>';
                     }
 
+                    // Sub-label baris kedua pada kartu pemain
+                    let subLabel = side === 'home' ? 'Home' : 'Away';
+                    let subClass = 'text-slate-500';
+                    if (sentOff) { subLabel = 'Kartu Merah — nonaktif'; subClass = 'text-rose-300 font-semibold'; }
+                    else if (isShootoutMode && hasTakenPenalty) {
+                        subLabel = penaltyResult === 'goal' ? 'Sudah tendang — Gol ✓' : 'Sudah tendang — Gagal ✗';
+                        subClass = penaltyResult === 'goal' ? 'text-emerald-400 font-semibold' : 'text-rose-400 font-semibold';
+                    }
+
                     const card = document.createElement('div');
-                    card.className = 'rounded-xl border border-slate-800 bg-slate-950 p-3' + (sentOff ? ' opacity-60 border-rose-500/30' : '');
+                    card.className = 'rounded-xl border bg-slate-950 p-3'
+                        + (sentOff ? ' opacity-60 border-rose-500/30' : '')
+                        + (!sentOff && isShootoutMode && hasTakenPenalty
+                            ? (penaltyResult === 'goal' ? ' border-emerald-700/50' : ' border-rose-700/50')
+                            : ' border-slate-800');
                     card.innerHTML = `
                         <div class="flex items-center justify-between gap-3">
                             <div>
                                 <p class="font-semibold text-slate-200">${player.label}${badges}</p>
-                                <p class="text-xs ${sentOff ? 'text-rose-300 font-semibold' : 'text-slate-500'}">${sentOff ? 'Kartu Merah — nonaktif' : (side === 'home' ? 'Home' : 'Away')}</p>
+                                <p class="text-xs ${subClass}">${subLabel}</p>
                             </div>
                         </div>
                     `;
 
                     const actions = document.createElement('div');
                     actions.className = 'mt-3 flex flex-wrap gap-2';
-                    types.forEach(type => {
-                        actions.appendChild(createEventButton(type, side, player.player_name, disabled || sentOff));
-                    });
+
+                    if (isShootoutMode && hasTakenPenalty) {
+                        // Ganti tombol dengan badge hasil
+                        const badge = document.createElement('span');
+                        badge.className = penaltyResult === 'goal'
+                            ? 'inline-flex items-center gap-1 rounded-lg px-3 py-1 text-xs font-semibold bg-emerald-600/20 text-emerald-300 border border-emerald-700/50'
+                            : 'inline-flex items-center gap-1 rounded-lg px-3 py-1 text-xs font-semibold bg-rose-600/20 text-rose-300 border border-rose-700/50';
+                        badge.textContent = penaltyResult === 'goal' ? '✓ Gol' : '✗ Gagal';
+                        actions.appendChild(badge);
+                    } else {
+                        types.forEach(type => {
+                            actions.appendChild(createEventButton(type, side, player.player_name, disabled || sentOff, player.player_id));
+                        });
+                    }
+
                     card.appendChild(actions);
                     panel.appendChild(card);
                 });
@@ -583,6 +638,18 @@ else if (type === 'penalty_miss') {
                     awayPenaltyLabel.classList.add('hidden');
                 }
 
+                // Skor agregat di tengah scoreboard (hanya tampil di Leg 2)
+                if (matchData.leg === 2 && (matchData.agg_home !== undefined || matchData.wins_home !== undefined)) {
+                    if (matchData.calculation_mode === 'wins') {
+                        aggregateScoreText.textContent = `${matchData.wins_home ?? 0} — ${matchData.wins_away ?? 0}`;
+                    } else {
+                        aggregateScoreText.textContent = `${matchData.agg_home ?? 0} — ${matchData.agg_away ?? 0}`;
+                    }
+                    aggregateScoreBox.classList.remove('hidden');
+                } else {
+                    aggregateScoreBox.classList.add('hidden');
+                }
+
                 let statusBadgeClass = 'bg-amber-500/15 text-amber-200';
                 let statusBadgeText = 'Scheduled';
                 if (disabled) {
@@ -632,11 +699,12 @@ else if (type === 'penalty_miss') {
                 renderTeamCards(homeCardsLabel, cardSummary.home);
                 renderTeamCards(awayCardsLabel, cardSummary.away);
 
+                const penaltySummary = buildPenaltySummary(matchData.events);
                 const rosterEventTypes = isShootout
                     ? ['penalty_goal', 'penalty_miss']
                     : ['goal', 'own_goal', 'yellow_card', 'red_card'];
-                renderRosterPanel(homeRosterPanel, 'home', matchData.home_roster, disabled, rosterEventTypes, cardSummary.home.players);
-                renderRosterPanel(awayRosterPanel, 'away', matchData.away_roster, disabled, rosterEventTypes, cardSummary.away.players);
+                renderRosterPanel(homeRosterPanel, 'home', matchData.home_roster, disabled, rosterEventTypes, cardSummary.home.players, penaltySummary.home);
+                renderRosterPanel(awayRosterPanel, 'away', matchData.away_roster, disabled, rosterEventTypes, cardSummary.away.players, penaltySummary.away);
 
                 endMatchButton.textContent = isShootout ? 'Akhiri Adu Penalti' : 'End Match';
 

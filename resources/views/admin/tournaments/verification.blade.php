@@ -14,6 +14,16 @@
             </div>
         @endif
 
+        @if($errors->any())
+            <div class="mb-6 rounded-xl bg-rose-900/20 border border-rose-500/30 p-4 text-rose-200">
+                <ul class="list-disc list-inside">
+                    @foreach($errors->all() as $error)
+                        <li>{{ $error }}</li>
+                    @endforeach
+                </ul>
+            </div>
+        @endif
+
         @php
             $pending = $participants->filter(fn($p) => ($p->team->verification_status ?? 'pending') === 'pending')->count();
             $verified = $participants->filter(fn($p) => ($p->team->verification_status ?? 'pending') === 'approved')->count();
@@ -44,7 +54,7 @@
             <div class="space-y-3">
                 @foreach($participants as $index => $participant)
                     @php
-                        $participant->load(['team', 'players']);
+                        $participant->load(['team.verificationDocuments', 'players']);
                         $status = $participant->team->verification_status ?? 'pending';
                         $playerCount = $participant->players->count();
                         $statusConfig = [
@@ -148,6 +158,48 @@
                                     @endforeach
                                 </div>
                             @endif
+
+                            {{-- R18 — Berkas verifikasi tim --}}
+                            <div class="mt-5 border-t border-slate-800 pt-4">
+                                <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Berkas Verifikasi ({{ $participant->team->verificationDocuments->count() }})</p>
+
+                                @if($participant->team->verificationDocuments->isEmpty())
+                                    <p class="text-sm text-slate-500 italic mb-3">Belum ada berkas diunggah.</p>
+                                @else
+                                    <div class="space-y-2 mb-4">
+                                        @foreach($participant->team->verificationDocuments as $doc)
+                                            <div class="flex items-center justify-between gap-3 p-2 bg-slate-900/50 rounded-lg border border-slate-800">
+                                                <div class="flex items-center gap-2 min-w-0">
+                                                    <span class="text-lg">📄</span>
+                                                    <div class="min-w-0">
+                                                        <p class="text-sm text-white truncate">{{ $doc->document_name }}</p>
+                                                        <p class="text-xs text-slate-500 truncate">{{ $doc->original_name }} · {{ $doc->size ? number_format($doc->size / 1024, 0) . ' KB' : '' }}</p>
+                                                    </div>
+                                                </div>
+                                                <div class="flex items-center gap-2 shrink-0">
+                                                    <a href="{{ asset('storage/' . $doc->document_path) }}" target="_blank" class="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded-lg text-white text-xs font-medium transition">Lihat</a>
+                                                    <form action="{{ route('tournaments.participants.documents.delete', [$tournament, $participant, $doc]) }}" method="POST" onsubmit="return confirm('Hapus berkas ini?');">
+                                                        @csrf
+                                                        @method('DELETE')
+                                                        <button type="submit" class="px-3 py-1.5 bg-rose-600/80 hover:bg-rose-600 rounded-lg text-white text-xs font-medium transition">Hapus</button>
+                                                    </form>
+                                                </div>
+                                            </div>
+                                        @endforeach
+                                    </div>
+                                @endif
+
+                                @if($status !== 'approved')
+                                    <form action="{{ route('tournaments.participants.documents.upload', [$tournament, $participant]) }}" method="POST" enctype="multipart/form-data" class="flex flex-col sm:flex-row gap-2">
+                                        @csrf
+                                        <input type="text" name="document_name" placeholder="Nama berkas (mis. KTP Kapten)" required class="flex-1 rounded-lg bg-slate-800 border border-slate-700 text-slate-200 text-sm px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                                        <input type="file" name="document_file" required accept=".pdf,.jpg,.jpeg,.png,.webp" class="text-sm text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-indigo-600 file:px-3 file:py-2 file:text-white">
+                                        <button type="submit" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 rounded-lg text-white text-sm font-semibold transition whitespace-nowrap">Unggah</button>
+                                    </form>
+                                @else
+                                    <p class="text-xs text-emerald-300/80">🔒 Tim sudah terverifikasi — berkas dikunci.</p>
+                                @endif
+                            </div>
                         </div>
                     </div>
                 @endforeach

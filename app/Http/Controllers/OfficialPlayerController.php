@@ -46,6 +46,12 @@ class OfficialPlayerController extends Controller
     public function store(Request $request)
     {
         $team = $this->getOfficialTeam($request);
+
+        // R18 — kunci data setelah berkas tim disetujui admin.
+        if ($lock = $this->guardLockedTeam($team)) {
+            return $lock;
+        }
+
         $tournamentTeamIds = $team->tournamentTeams()->pluck('id')->toArray();
 
         $data = $request->validate([
@@ -150,6 +156,11 @@ class OfficialPlayerController extends Controller
         $this->authorizePlayer($request, $player);
 
         $team = $this->getOfficialTeam($request);
+
+        if ($lock = $this->guardLockedTeam($team)) {
+            return $lock;
+        }
+
         $tournamentTeamIds = $team->tournamentTeams()->pluck('id')->toArray();
 
         $data = $request->validate([
@@ -223,6 +234,12 @@ class OfficialPlayerController extends Controller
     {
         $this->authorizePlayer($request, $player);
 
+        $team = $this->getOfficialTeam($request);
+
+        if ($lock = $this->guardLockedTeam($team)) {
+            return $lock;
+        }
+
         $player->delete();
 
         return redirect()->route('official.players.index')->with('success', 'Pemain berhasil dihapus.');
@@ -233,6 +250,19 @@ class OfficialPlayerController extends Controller
         $teamId = $request->session()->get('official_team_id');
 
         return Team::findOrFail($teamId);
+    }
+
+    /**
+     * R18 — Jika berkas tim sudah disetujui (approved), roster dikunci:
+     * manager tidak bisa menambah/ubah/hapus pemain.
+     */
+    private function guardLockedTeam(Team $team)
+    {
+        if (($team->verification_status ?? 'pending') === 'approved') {
+            return back()->with('error', 'Data tim sudah diverifikasi & dikunci oleh panitia. Hubungi panitia jika perlu perubahan.');
+        }
+
+        return null;
     }
 
     private function authorizePlayer(Request $request, TournamentTeamPlayer $player): void
