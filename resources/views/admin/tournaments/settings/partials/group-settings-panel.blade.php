@@ -5,6 +5,7 @@
         $isTournamentSelected = $selectedCompetitionType === 'tournament';
         $isLeagueSelected = $selectedCompetitionType === 'league';
         $isLeaguePlayoffSelected = $selectedCompetitionType === 'league_playoff';
+        $isGroupKnockoutSelected = $selectedCompetitionType === 'group_knockout';
         $settingPlayoffOptions = isset($bracketSetting) ? ($bracketSetting->value['playoff_options'] ?? []) : [];
         if (is_array($settingPlayoffOptions)) {
             if (in_array('promotion', $settingPlayoffOptions) && in_array('relegation', $settingPlayoffOptions)) {
@@ -71,8 +72,14 @@
 
                 <label class="flex items-center gap-3 p-4 rounded-lg cursor-pointer transition {{ $isLeaguePlayoffSelected ? 'bg-slate-700 shadow-sm' : 'bg-slate-800 hover:bg-slate-750' }}">
                     <input type="radio" name="competition_type" value="league_playoff" class="w-4 h-4 text-purple-600" {{ $selectedCompetitionType === 'league_playoff' ? 'checked' : '' }} {{ $isLocked ? 'disabled' : '' }}>
-                    <span class="font-medium {{ $isLeaguePlayoffSelected ? 'text-white' : 'text-slate-400' }}>Sistem Liga - Play Off</span>
-                    <span class="ml-auto text-xs {{ $isLeaguePlayoffSelected ? 'text-slate-300' : 'text-slate-500' }}>Liga reguler dengan babak play off tambahan</span>
+                    <span class="font-medium {{ $isLeaguePlayoffSelected ? 'text-white' : 'text-slate-400' }}">Sistem Liga - Play Off</span>
+                    <span class="ml-auto text-xs {{ $isLeaguePlayoffSelected ? 'text-slate-300' : 'text-slate-500' }}">Liga reguler dengan babak play off tambahan</span>
+                </label>
+
+                <label class="flex items-center gap-3 p-4 rounded-lg cursor-pointer transition {{ $isGroupKnockoutSelected ? 'bg-slate-700 shadow-sm' : 'bg-slate-800 hover:bg-slate-750' }}">
+                    <input type="radio" name="competition_type" value="group_knockout" class="w-4 h-4 text-purple-600" {{ $selectedCompetitionType === 'group_knockout' ? 'checked' : '' }} {{ $isLocked ? 'disabled' : '' }}>
+                    <span class="font-medium {{ $isGroupKnockoutSelected ? 'text-white' : 'text-slate-400' }}">Grup → Gugur (Euro / UCL / Piala Dunia)</span>
+                    <span class="ml-auto text-xs {{ $isGroupKnockoutSelected ? 'text-slate-300' : 'text-slate-500' }}">Fase grup dulu, lalu babak gugur</span>
                 </label>
             </div>
         </div>
@@ -144,7 +151,7 @@
         @php
             $selectedLeagueRound = old('league_round_type', $tournament->groupSetting->league_round_type ?? 'single');
         @endphp
-        <div id="leagueRoundCard" class="bg-slate-900 rounded-xl border border-slate-800 p-6 mt-4 transition duration-200 {{ ($isLeagueSelected || $isLeaguePlayoffSelected) ? '' : 'hidden' }}">
+        <div id="leagueRoundCard" class="bg-slate-900 rounded-xl border border-slate-800 p-6 mt-4 transition duration-200 {{ ($isLeagueSelected || $isLeaguePlayoffSelected || $isGroupKnockoutSelected) ? '' : 'hidden' }}">
             <label class="block text-sm font-semibold text-white mb-4">
                 <span class="flex items-center gap-2 mb-2">
                     <svg class="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -210,7 +217,7 @@
             </div>
         </div>
 
-        <div id="qualifiedCard" class="bg-slate-900 rounded-xl border border-slate-800 p-6 {{ $isLeaguePlayoffSelected && in_array($selectedPlayoffType, ['promotion', 'both'], true) ? '' : 'hidden' }}">
+        <div id="qualifiedCard" class="bg-slate-900 rounded-xl border border-slate-800 p-6 {{ ($isLeaguePlayoffSelected && in_array($selectedPlayoffType, ['promotion', 'both'], true)) || $isGroupKnockoutSelected ? '' : 'hidden' }}">
             <label class="block text-sm font-semibold text-white mb-4">
                 <span class="flex items-center gap-2 mb-2">
                     <svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -252,7 +259,7 @@
 
         <div class="bg-indigo-900/20 border border-indigo-500/30 rounded-lg p-4">
             <p class="text-sm text-indigo-200">
-                <strong>💡 Info:</strong> <span class="competition-hint" data-type="tournament" style="{{ $isTournamentSelected ? '' : 'display:none' }}">Sistem Turnamen tidak memerlukan pengaturan grup — cukup simpan, lalu bracket gugur akan dibuat otomatis dari tim yang lolos verifikasi.</span><span class="competition-hint" data-type="league" style="{{ $isLeagueSelected ? '' : 'display:none' }}">Tentukan jumlah tim liga dan ranking tim yang terdegradasi. Sistem liga tidak memiliki babak gugur — juara ditentukan dari klasemen.</span><span class="competition-hint" data-type="league_playoff" style="{{ $isLeaguePlayoffSelected ? '' : 'display:none' }}">Tentukan jumlah tim liga, lalu pilih ranking yang masuk play off promosi/juara dan/atau play off degradasi.</span> Klik tombol "Simpan Perubahan" untuk menyimpan ke database.
+                <strong>💡 Info:</strong> <span class="competition-hint" data-type="tournament" style="{{ $isTournamentSelected ? '' : 'display:none' }}">Sistem Turnamen tidak memerlukan pengaturan grup — cukup simpan, lalu bracket gugur akan dibuat otomatis dari tim yang lolos verifikasi.</span><span class="competition-hint" data-type="league" style="{{ $isLeagueSelected ? '' : 'display:none' }}">Tentukan jumlah tim liga dan ranking tim yang terdegradasi. Sistem liga tidak memiliki babak gugur — juara ditentukan dari klasemen.</span><span class="competition-hint" data-type="league_playoff" style="{{ $isLeaguePlayoffSelected ? '' : 'display:none' }}">Tentukan jumlah tim liga, lalu pilih ranking yang masuk play off promosi/juara dan/atau play off degradasi.</span><span class="competition-hint" data-type="group_knockout" style="{{ $isGroupKnockoutSelected ? '' : 'display:none' }}">Tentukan jumlah grup (min 2) dan tim per grup, lalu pilih ranking tiap grup yang lolos ke babak gugur (mis. Ranking 1 & 2). Bracket terisi otomatis setelah seluruh laga grup selesai.</span> Klik tombol "Simpan Perubahan" untuk menyimpan ke database.
             </p>
         </div>
 
@@ -363,6 +370,7 @@
         const selectedType = document.querySelector('input[name="competition_type"]:checked').value;
         const isLeague = selectedType === 'league';
         const isLeaguePlayoff = selectedType === 'league_playoff';
+        const isGroupKnockout = selectedType === 'group_knockout';
 
         // Sistem turnamen (gugur murni) tidak memakai pengaturan grup/ranking
         if (selectedType === 'tournament') {
@@ -371,7 +379,7 @@
         }
 
         const teamsPerGroupInput = document.getElementById('teamsPerGroup');
-        const minValue = (isLeague || isLeaguePlayoff) ? 3 : 2;
+        const minValue = (isLeague || isLeaguePlayoff || isGroupKnockout) ? 3 : 2;
         
         // Update min attribute dan hint text
         teamsPerGroupInput.min = minValue;
@@ -380,10 +388,10 @@
         let teamsPerGroup = parseInt(teamsPerGroupInput.value) || minValue;
 
         // Validasi minimum berdasarkan tipe kompetisi
-        if ((isLeague || isLeaguePlayoff) && teamsPerGroup < 3) {
+        if ((isLeague || isLeaguePlayoff || isGroupKnockout) && teamsPerGroup < 3) {
             teamsPerGroup = 3;
             teamsPerGroupInput.value = 3;
-        } else if (!isLeague && !isLeaguePlayoff && teamsPerGroup < 2) {
+        } else if (!isLeague && !isLeaguePlayoff && !isGroupKnockout && teamsPerGroup < 2) {
             teamsPerGroup = 2;
             teamsPerGroupInput.value = 2;
         }
@@ -394,9 +402,9 @@
             return;
         }
 
-        // Qualified hanya dipakai liga-playoff (promosi); liga memakai degradasi
+        // Qualified dipakai liga-playoff (promosi) & grup→gugur; liga memakai degradasi
         const playoffType = isLeaguePlayoff ? (document.querySelector('input[name="playoff_type"]:checked')?.value || '') : '';
-        let useQualified = isLeaguePlayoff && (playoffType === 'promotion' || playoffType === 'both');
+        let useQualified = isGroupKnockout || (isLeaguePlayoff && (playoffType === 'promotion' || playoffType === 'both'));
         let useRelegated = isLeague || (isLeaguePlayoff && (playoffType === 'relegation' || playoffType === 'both'));
 
         // Update qualified teams container (if needed)
@@ -548,17 +556,18 @@
     document.querySelector('form')?.addEventListener('submit', function(e) {
         const selectedType = document.querySelector('input[name="competition_type"]:checked').value;
         const isLeaguePlayoff = selectedType === 'league_playoff';
+        const isGroupKnockout = selectedType === 'group_knockout';
         const playoffType = isLeaguePlayoff ? (document.querySelector('input[name="playoff_type"]:checked')?.value || '') : '';
-        
+
         // Sistem turnamen (gugur murni) tidak butuh ranking lolos/degradasi
-        let needQualified = isLeaguePlayoff && (playoffType === 'promotion' || playoffType === 'both');
+        let needQualified = isGroupKnockout || (isLeaguePlayoff && (playoffType === 'promotion' || playoffType === 'both'));
         let needRelegated = selectedType === 'league' || (isLeaguePlayoff && (playoffType === 'relegation' || playoffType === 'both'));
 
         if (needQualified) {
             const qualifiedBoxes = document.querySelectorAll('input[name="qualified_teams[]"]:checked');
             if (qualifiedBoxes.length === 0) {
                 e.preventDefault();
-                alert('❌ Pilih minimal 1 ranking untuk Play Off Promosi');
+                alert(isGroupKnockout ? '❌ Pilih minimal 1 ranking yang lolos ke babak gugur' : '❌ Pilih minimal 1 ranking untuk Play Off Promosi');
                 document.getElementById('selectedInfoQualified').classList.add('border-red-500/30', 'bg-red-600/20');
                 document.getElementById('selectedInfoQualified').classList.remove('border-indigo-500/30', 'bg-indigo-600/20');
                 return;
@@ -664,16 +673,22 @@
 
         if (!qualifiedCard || !relegatedCard) return;
 
-        // Qualified card hanya untuk league_playoff + promotion/both
+        // Qualified card untuk league_playoff + promotion/both ATAU grup→gugur
         // (sistem turnamen gugur murni tidak memakai ranking kelolosan)
-        const showQualified = selectedType === 'league_playoff' && (playoffType === 'promotion' || playoffType === 'both');
+        const isGroupKnockout = selectedType === 'group_knockout';
+        const showQualified = isGroupKnockout || (selectedType === 'league_playoff' && (playoffType === 'promotion' || playoffType === 'both'));
         // Relegated card: league OR (league_playoff + relegation/both)
         const showRelegated = selectedType === 'league' || (selectedType === 'league_playoff' && (playoffType === 'relegation' || playoffType === 'both'));
 
         if (showQualified) {
             qualifiedCard.classList.remove('hidden');
-            titleEl.textContent = 'Tim Play Off Promosi';
-            descEl.textContent = 'Pilih ranking tim mana saja yang akan mengikuti Play Off Promosi';
+            if (isGroupKnockout) {
+                titleEl.textContent = 'Tim yang Lolos ke Babak Gugur';
+                descEl.textContent = 'Pilih ranking tiap grup yang lolos ke babak gugur (mis. Ranking 1 & 2).';
+            } else {
+                titleEl.textContent = 'Tim Play Off Promosi';
+                descEl.textContent = 'Pilih ranking tim mana saja yang akan mengikuti Play Off Promosi';
+            }
         } else {
             qualifiedCard.classList.add('hidden');
         }
@@ -707,21 +722,24 @@
 
         const isLeagueSelected = selectedType === 'league';
         const isLeaguePlayoffSelected = selectedType === 'league_playoff';
+        const isGroupKnockoutSelected = selectedType === 'group_knockout';
         const playoffType = isLeaguePlayoffSelected ? (document.querySelector('input[name="playoff_type"]:checked')?.value || '') : '';
         const bracketActiveForLeaguePlayoff = isLeaguePlayoffSelected && (playoffType === 'promotion' || playoffType === 'relegation' || playoffType === 'both');
 
-        // Kartu pengaturan grup hanya relevan untuk liga & liga-playoff
+        // Kartu pengaturan grup relevan untuk liga, liga-playoff & grup→gugur
         const groupSizeCard = document.getElementById('groupSizeCard');
         const tournamentInfoCard = document.getElementById('tournamentInfoCard');
         const leagueRoundCard = document.getElementById('leagueRoundCard');
         if (groupSizeCard) groupSizeCard.classList.toggle('hidden', selectedType === 'tournament');
         if (tournamentInfoCard) tournamentInfoCard.classList.toggle('hidden', selectedType !== 'tournament');
-        // R11 — kartu format liga hanya untuk league / league_playoff
-        if (leagueRoundCard) leagueRoundCard.classList.toggle('hidden', !(isLeagueSelected || isLeaguePlayoffSelected));
+        // R11 — kartu format liga untuk league / league_playoff / grup→gugur
+        if (leagueRoundCard) leagueRoundCard.classList.toggle('hidden', !(isLeagueSelected || isLeaguePlayoffSelected || isGroupKnockoutSelected));
         document.querySelectorAll('.competition-hint').forEach(el => {
             el.style.display = el.dataset.type === selectedType ? '' : 'none';
         });
 
+        // Liga & liga-playoff dikunci ke 1 grup; grup→gugur memakai banyak grup
+        // (min 2) sehingga jumlah grup tetap bisa diubah.
         if (isLeagueSelected || isLeaguePlayoffSelected) {
             groupCount.value = '1';
             if (!isGloballyLocked) {
@@ -729,11 +747,25 @@
                 groupCount.classList.add('cursor-not-allowed', 'opacity-70');
             }
         } else if (!isGloballyLocked) {
+            if (isGroupKnockoutSelected && (parseInt(groupCount.value) || 1) < 2) {
+                groupCount.value = '2';
+            }
             groupCount.readOnly = false;
             groupCount.classList.remove('cursor-not-allowed', 'opacity-70');
         }
 
-        if (selectedType === 'tournament') {
+        if (isGroupKnockoutSelected) {
+            infoBox.className = 'mt-4 p-4 bg-violet-900/20 border border-violet-500/30 text-violet-200 rounded-lg text-sm flex items-start gap-3';
+            infoBox.innerHTML = `
+                <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M18 5v8a2 2 0 01-2 2h-5l-5 4v-4H4a2 2 0 01-2-2V5a2 2 0 012-2h12a2 2 0 012 2zm-11-1a1 1 0 11-2 0 1 1 0 012 0zM8 7a1 1 0 000 2h6a1 1 0 000-2H8zm0 4a1 1 0 000 2h3a1 1 0 000-2H8z" clip-rule="evenodd"></path>
+                </svg>
+                <div>
+                    <strong class="block mb-1">✓ Grup → Gugur Aktif (Euro / UCL / Piala Dunia)</strong>
+                    <p>Fase grup round-robin digelar dulu untuk tiap grup. Tim sesuai ranking yang dipilih lolos ke babak gugur dengan pasangan silang (Juara Grup A × Runner-up Grup B). Bracket terisi otomatis setelah seluruh laga grup selesai.</p>
+                </div>
+            `;
+        } else if (selectedType === 'tournament') {
             infoBox.className = 'mt-4 p-4 bg-violet-900/20 border border-violet-500/30 text-violet-200 rounded-lg text-sm flex items-start gap-3';
             infoBox.innerHTML = `
                 <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
