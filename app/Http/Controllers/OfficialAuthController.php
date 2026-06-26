@@ -3,9 +3,11 @@
 namespace App\Http\Controllers;
 
 use App\Models\Team;
+use App\Models\Tournament;
 use App\Models\TournamentMatch;
 use App\Models\TournamentTeamOfficial;
 use App\Models\TournamentTeamPlayer;
+use App\Services\TournamentStatisticsService;
 use Illuminate\Http\Request;
 
 class OfficialAuthController extends Controller
@@ -164,6 +166,44 @@ class OfficialAuthController extends Controller
             'scope' => $scope,
             'liveMatches' => $liveMatches,
             'teamTournamentTeamIds' => $tournamentTeamIds->toArray(),
+        ]);
+    }
+
+    /**
+     * N13 — Statistik view-only untuk Manager.
+     * Menampilkan statistik (top skor, assist, kartu, statistik tim) untuk
+     * setiap turnamen yang diikuti tim. Komputasi memakai service yang sama
+     * dengan halaman Admin (N12) agar konsisten dan tanpa duplikasi.
+     */
+    public function statistics(Request $request, TournamentStatisticsService $statistics)
+    {
+        $team = Team::find($request->session()->get('official_team_id'));
+
+        if (! $team) {
+            return redirect()->route('official.login');
+        }
+
+        $tournamentIds = $team->tournamentTeams()->pluck('tournament_id')->unique();
+
+        $reports = $tournamentIds
+            ->map(function ($tournamentId) use ($statistics) {
+                $tournament = Tournament::find($tournamentId);
+
+                if (! $tournament) {
+                    return null;
+                }
+
+                return [
+                    'tournament' => $tournament,
+                    'stats' => $statistics->forTournament($tournament),
+                ];
+            })
+            ->filter()
+            ->values();
+
+        return view('official.statistics', [
+            'team' => $team,
+            'reports' => $reports,
         ]);
     }
 

@@ -133,6 +133,10 @@ Route::get('/public/login', function () {
     ]);
 })->name('public.login');
 
+// N13 — Statistik turnamen view-only untuk Tamu/Visitor (tanpa login)
+Route::get('/public/statistics', [App\Http\Controllers\PublicStatisticsController::class, 'index'])->name('public.statistics.index');
+Route::get('/public/tournaments/{tournament}/statistics', [App\Http\Controllers\PublicStatisticsController::class, 'show'])->name('public.statistics.show');
+
 Route::get('/official/login', [App\Http\Controllers\OfficialAuthController::class, 'showLogin'])->name('official.login');
 Route::post('/official/login', [App\Http\Controllers\OfficialAuthController::class, 'login'])->name('official.login.submit');
 Route::post('/official/logout', [App\Http\Controllers\OfficialAuthController::class, 'logout'])->name('official.logout');
@@ -158,4 +162,6 @@ Route::middleware([App\Http\Middleware\OfficialAuth::class])->group(function () 
     Route::get('/official/standings', [App\Http\Controllers\OfficialStandingsController::class, 'index'])->name('official.standings');
     // N4 — Official/Manager dapat melihat bagan/bracket (read-only)
     Route::get('/official/bracket', [App\Http\Controllers\OfficialBracketController::class, 'index'])->name('official.bracket');
+    // N13 — Statistik view-only untuk Manager
+    Route::get('/official/statistics', [App\Http\Controllers\OfficialAuthController::class, 'statistics'])->name('official.statistics');
 });
