@@ -2747,7 +2747,7 @@ class TournamentController extends Controller
             }
 
             $validated = $request->validate([
-                'event_type' => 'required|in:goal,own_goal,yellow_card,red_card,foul,timeout,halftime,full_time,penalty_goal,penalty_miss',
+                'event_type' => 'required|in:goal,own_goal,assist,yellow_card,red_card,foul,timeout,halftime,full_time,penalty_goal,penalty_miss',
                 'team_side' => 'nullable|in:home,away',
                 'player_name' => 'nullable|string|max:120',
                 // R19 — id pemain asli (opsional; event tanpa roster tetap valid).
@@ -2766,7 +2766,7 @@ class TournamentController extends Controller
                 return $fail('Pertandingan dalam fase adu penalti. Hanya event penalti yang dapat dicatat.');
             }
 
-            if (in_array($validated['event_type'], ['goal', 'own_goal', 'yellow_card', 'red_card', 'foul', 'penalty_goal', 'penalty_miss'], true) && empty($validated['team_side'])) {
+            if (in_array($validated['event_type'], ['goal', 'own_goal', 'assist', 'yellow_card', 'red_card', 'foul', 'penalty_goal', 'penalty_miss'], true) && empty($validated['team_side'])) {
                 return $fail('Pilih tim untuk event ini.');
             }
 

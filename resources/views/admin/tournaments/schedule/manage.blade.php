@@ -282,6 +282,7 @@
             const eventLabels = {
                 goal: 'Goal',
                 own_goal: 'Own Goal',
+                assist: 'Assist',
                 yellow_card: 'Yellow Card',
                 red_card: 'Red Card',
                 penalty_goal: 'Penalti Gol',
@@ -296,6 +297,9 @@
 
                 if (type === 'goal' || type === 'penalty_goal') {
     button.classList.add('bg-emerald-600');
+}
+else if (type === 'assist') {
+    button.classList.add('bg-sky-600');
 }
 else if (type === 'own_goal') {
     button.classList.add('bg-violet-600');
@@ -462,7 +466,7 @@ else if (type === 'penalty_miss') {
                     return;
                 }
 
-                const types = eventTypes || ['goal', 'own_goal', 'yellow_card', 'red_card'];
+                const types = eventTypes || ['goal', 'assist', 'own_goal', 'yellow_card', 'red_card'];
                 const cards = playerCards || {};
                 const penalties = penaltyTaken || {};
                 const isShootoutMode = types.includes('penalty_goal');
@@ -550,6 +554,10 @@ else if (type === 'penalty_miss') {
 
             case 'own_goal':
                 icon = '🥅';
+                break;
+
+            case 'assist':
+                icon = '👟';
                 break;
 
             case 'yellow_card':
@@ -694,7 +702,7 @@ else if (type === 'penalty_miss') {
                 const penaltySummary = buildPenaltySummary(matchData.events);
                 const rosterEventTypes = isShootout
                     ? ['penalty_goal', 'penalty_miss']
-                    : ['goal', 'own_goal', 'yellow_card', 'red_card'];
+                    : ['goal', 'assist', 'own_goal', 'yellow_card', 'red_card'];
                 renderRosterPanel(homeRosterPanel, 'home', matchData.home_roster, disabled, rosterEventTypes, cardSummary.home.players, penaltySummary.home);
                 renderRosterPanel(awayRosterPanel, 'away', matchData.away_roster, disabled, rosterEventTypes, cardSummary.away.players, penaltySummary.away);
 
