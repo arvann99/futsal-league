@@ -88,6 +88,9 @@ Route::middleware(['auth', 'owns'])->group(function () {
     // Tournament Standings
     Route::get('/tournaments/{tournament}/standings', [TournamentController::class, 'standings'])->name('tournaments.standings');
 
+    // N12 — Manajemen Pemain / Statistik turnamen (sisi Admin)
+    Route::get('/tournaments/{tournament}/statistics', [TournamentController::class, 'statistics'])->name('tournaments.statistics');
+
     // Tournament Document Verification
     Route::get('/tournaments/{tournament}/verification', [TournamentController::class, 'verification'])->name('tournaments.verification');
     Route::patch('/tournaments/{tournament}/participants/{participant}/verify', [TournamentController::class, 'verifyParticipant'])->name('tournaments.participants.verify');

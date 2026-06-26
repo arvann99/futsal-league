@@ -10,6 +10,7 @@ use App\Models\AppSetting;
 use App\Models\TournamentGroupSetting;
 use App\Services\MatchGenerator;
 use App\Services\TieResolver;
+use App\Services\TournamentStatisticsService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -3384,6 +3385,22 @@ class TournamentController extends Controller
             ->get();
 
         return view('admin.tournaments.verification', compact('tournament', 'participants'));
+    }
+
+    /**
+     * N12 — Halaman "Manajemen Pemain" / Statistik (sisi Admin).
+     * Menampilkan ranking pemain (top skor, assist, kartu) & statistik tim
+     * (produktif, kebobolan, fairplay). Komputasi didelegasikan ke service
+     * agar reusable untuk N13 (view-only Manager & Tamu/Visitor).
+     */
+    public function statistics(Tournament $tournament, TournamentStatisticsService $statistics)
+    {
+        $stats = $statistics->forTournament($tournament);
+
+        return view('admin.tournaments.statistics', array_merge(
+            ['tournament' => $tournament],
+            $stats,
+        ));
     }
 
     /**
