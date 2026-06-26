@@ -96,21 +96,47 @@ class OfficialAuthController extends Controller
         }
 
         $tournamentTeamIds = $team->tournamentTeams()->pluck('id');
+        $tournamentIds = $team->tournamentTeams()->pluck('tournament_id')->unique();
+
+        // N11 — scope tampilan jadwal: 'internal' (default) hanya laga tim sendiri,
+        // 'tournament' menampilkan seluruh laga dari semua turnamen yang diikuti.
+        $scope = $request->query('scope', 'internal');
+        $scope = in_array($scope, ['internal', 'tournament'], true) ? $scope : 'internal';
 
         // R20 — tampilkan juga pertandingan yang belum dijadwalkan (match_date
         // NULL / TBD) supaya manager bisa melihat lawan & babak lebih awal.
         // Match terjadwal diurutkan menurut tanggal, yang TBD ditaruh di akhir.
         $matches = TournamentMatch::with(['tournament', 'homeTeam.team', 'awayTeam.team'])
-            ->where(function ($query) use ($tournamentTeamIds) {
-                $query->whereIn('home_team_id', $tournamentTeamIds)
-                    ->orWhereIn('away_team_id', $tournamentTeamIds);
+            ->when($scope === 'tournament', function ($query) use ($tournamentIds) {
+                // Jadwal Turnamen: seluruh laga dari turnamen yang diikuti tim.
+                $query->whereIn('tournament_id', $tournamentIds);
+            }, function ($query) use ($tournamentTeamIds) {
+                // Jadwal Internal: hanya laga yang melibatkan tim manager.
+                $query->where(function ($q) use ($tournamentTeamIds) {
+                    $q->whereIn('home_team_id', $tournamentTeamIds)
+                        ->orWhereIn('away_team_id', $tournamentTeamIds);
+                });
             })
             ->orderByRaw('match_date IS NULL, match_date ASC')
             ->get();
 
+        // N7 — scoreboard tim yang SEDANG bertanding (live) di seluruh turnamen
+        // yang diikuti tim (bukan hanya laga tim sendiri), untuk ditampilkan
+        // menggantikan "Riwayat Pertandingan".
+        $liveMatches = TournamentMatch::with(['tournament', 'homeTeam.team', 'awayTeam.team'])
+            ->whereIn('tournament_id', $tournamentIds)
+            ->whereIn('status', ['live_match', 'penalty_shootout'])
+            ->orderByDesc('match_date')
+            ->get();
+
         $now = now();
-        $nextMatch = $matches->first(function ($match) use ($now) {
-            return $match->match_date && $match->match_date->gte($now);
+        // "Pertandingan Berikutnya" selalu merujuk laga tim sendiri walau scope
+        // sedang menampilkan seluruh turnamen.
+        $nextMatch = $matches->first(function ($match) use ($now, $tournamentTeamIds) {
+            $involvesTeam = $tournamentTeamIds->contains($match->home_team_id)
+                || $tournamentTeamIds->contains($match->away_team_id);
+
+            return $involvesTeam && $match->match_date && $match->match_date->gte($now);
         });
 
         $filter = $request->query('filter', 'all');
@@ -135,6 +161,8 @@ class OfficialAuthController extends Controller
             'matches' => $filteredMatches,
             'nextMatch' => $nextMatch,
             'filter' => $filter,
+            'scope' => $scope,
+            'liveMatches' => $liveMatches,
             'teamTournamentTeamIds' => $tournamentTeamIds->toArray(),
         ]);
     }
