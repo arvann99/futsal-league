@@ -32,7 +32,7 @@ class TeamController extends Controller
 
         $slugBase = Str::slug($validated['name']);
         $validated['slug'] = $slugBase ? $this->generateUniqueSlug($slugBase) : null;
-        $validated['manager_token'] = $this->generateUniqueManagerToken($validated['name']);
+        $validated['manager_token'] = Team::generateUniqueManagerToken($validated['name']);
         $validated['verification_status'] = 'pending';
         $validated['created_by'] = Auth::id(); // R21 — scoping tim per admin
 
@@ -73,7 +73,7 @@ class TeamController extends Controller
 
     public function resetToken(\Illuminate\Http\Request $request, Team $team)
     {
-        $team->update(['manager_token' => $this->generateUniqueManagerToken($team->name)]);
+        $team->update(['manager_token' => Team::generateUniqueManagerToken($team->name)]);
 
         // Prefer returning to the referring page (participants page),
         // otherwise fall back to the access manager listing.
@@ -106,18 +106,6 @@ class TeamController extends Controller
         }
 
         return $slug;
-    }
-
-    private function generateUniqueManagerToken(?string $name = null): string
-    {
-        $base = $name ?? 'TEAM';
-        $prefix = strtoupper(Str::slug($base, '')) ?: 'TEAM';
-
-        do {
-            $token = $prefix . '-' . random_int(1000, 9999);
-        } while (Team::where('manager_token', $token)->exists());
-
-        return $token;
     }
 
     public function destroy(Team $team)
