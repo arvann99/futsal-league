@@ -194,7 +194,9 @@
                         $mirrorTops = null;
                         $mirrorCanvasHeight = $bracketCanvasHeight;
                         if ($mirror['enabled']) {
-                            $mirrorTops = \App\Services\MatchGenerator::computeMirrorCardTops($mirror, $rowUnit, $cardHeight);
+                            // Sisakan ruang di atas Final untuk centerpiece (piala + juara + FINAL).
+                            $mirrorTopPadding = 160;
+                            $mirrorTops = \App\Services\MatchGenerator::computeMirrorCardTops($mirror, $rowUnit, $cardHeight, $mirrorTopPadding);
                             $mirrorCanvasHeight = $mirrorTops['height'] + $columnHeaderHeight;
                         }
                     @endphp
@@ -245,9 +247,20 @@
                                                     }
                                                     $finalTopPx = ($mirrorTops['final'] ?? 0) + $columnHeaderHeight;
                                                 @endphp
-                                                {{-- Label FINAL tepat di atas kartu final --}}
-                                                <div class="absolute left-0 right-0 text-center" style="top: {{ max($finalTopPx - 28, 0) }}px;">
-                                                    <p class="text-[10px] uppercase tracking-[0.3em] text-amber-300 font-bold">🏆 {{ $mirror['final']['label'] }}</p>
+                                                {{-- Zona di ATAS kartu Final: piala besar → JUARA → label FINAL.
+                                                     Di-anchor agar bagian bawahnya berhenti tepat di atas kartu. --}}
+                                                <div class="absolute left-0 right-0 flex flex-col items-center justify-end text-center" style="top: 0; height: {{ max($finalTopPx - 8, 0) }}px;">
+                                                    {{-- Piala besar di tengah --}}
+                                                    <div class="text-6xl leading-none drop-shadow-[0_0_22px_rgba(245,197,24,0.45)] select-none" aria-hidden="true">🏆</div>
+
+                                                    {{-- Juara di ATAS (bila final sudah ada pemenang) --}}
+                                                    @if($finalChampion)
+                                                        <span class="mt-3 text-[9px] uppercase tracking-[0.3em] text-amber-300 font-semibold">Juara</span>
+                                                        <span class="mt-1 rounded-full bg-amber-500/15 border border-amber-500/40 px-3 py-1 text-sm font-bold text-amber-200">{{ $finalChampion }}</span>
+                                                    @endif
+
+                                                    {{-- Label FINAL tepat di atas kartu --}}
+                                                    <p class="mt-3 mb-2 text-[11px] uppercase tracking-[0.3em] text-amber-300 font-bold">{{ $mirror['final']['label'] }}</p>
                                                 </div>
                                                 @include('admin.tournaments.bracket.partials.match-card', [
                                                     'match' => $finalMatch,
@@ -256,12 +269,6 @@
                                                     'top' => $finalTopPx,
                                                     'side' => 'final',
                                                 ])
-                                                @if($finalChampion)
-                                                    <div class="absolute left-0 right-0 z-10 flex flex-col items-center" style="top: {{ $finalTopPx + 200 }}px;">
-                                                        <span class="text-[9px] uppercase tracking-[0.3em] text-amber-300 font-semibold">Juara</span>
-                                                        <span class="mt-1 rounded-full bg-amber-500/15 border border-amber-500/40 px-3 py-1 text-sm font-bold text-amber-200">{{ $finalChampion }}</span>
-                                                    </div>
-                                                @endif
                                             @endif
                                         </div>
 

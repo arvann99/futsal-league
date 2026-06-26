@@ -938,7 +938,7 @@ class MatchGenerator
      * Kolom sisi KANAN sudah ter-reverse di split (index 0 = paling dekat final,
      * paling dalam), jadi ronde terluar kanan ada di index terakhir.
      */
-    public static function computeMirrorCardTops(array $mirror, float $rowUnit, float $cardHeight): array
+    public static function computeMirrorCardTops(array $mirror, float $rowUnit, float $cardHeight, float $topPadding = 0): array
     {
         // Hitung tops satu sisi. $columnsOutwardFirst: kolom urut dari ronde
         // TERLUAR (paling banyak match) ke ronde TERDALAM (mendekati final).
@@ -995,6 +995,24 @@ class MatchGenerator
         $leftMid = $leftDeepest ? array_sum($leftDeepest) / count($leftDeepest) : 0;
         $rightMid = $rightDeepest ? array_sum($rightDeepest) / count($rightDeepest) : 0;
         $finalTop = ($leftMid + $rightMid) / 2;
+
+        // Geser seluruh bagan ke bawah sebesar $topPadding agar selalu ada ruang
+        // di atas Final untuk centerpiece (piala + juara + label). Final tetap
+        // sejajar dengan pengumpannya sehingga konektor tidak melenceng.
+        if ($topPadding > 0) {
+            $shift = function (array $sideTops) use ($topPadding): array {
+                foreach ($sideTops as $c => $matchTops) {
+                    foreach ($matchTops as $i => $t) {
+                        $sideTops[$c][$i] = $t + $topPadding;
+                    }
+                }
+
+                return $sideTops;
+            };
+            $leftTops = $shift($leftTops);
+            $rightTops = $shift($rightTops);
+            $finalTop += $topPadding;
+        }
 
         // Tinggi kanvas: dari semua tops + tinggi kartu.
         $maxTop = $finalTop;
