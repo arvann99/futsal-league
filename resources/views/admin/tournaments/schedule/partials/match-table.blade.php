@@ -121,6 +121,16 @@
                         // Saat adu penalti, edit manual dikunci tapi logger tetap aktif
                         $editLocked = $matchLocked || $statusKey === 'penalty_shootout';
                         $matchDisabled = $editLocked ? 'disabled' : '';
+
+                        // N6 — jadwal belum diisi bila match_date (datetime) kosong.
+                        // Untuk tie, cek leg yang jadi sumber logger (logger_match_id).
+                        $scheduleMissing = $isTie
+                            ? collect($match['legs'])->contains(fn($l) => empty($l['datetime']))
+                            : empty($match['datetime']);
+                        // Jadwal masih bisa diatur selama belum Full Time / penalti.
+                        $scheduleLocked = ! $matchReady || in_array($statusKey, ['full_time', 'penalty_shootout'], true) || $leg2Locked;
+                        // Live Logger butuh: tidak terkunci DAN jadwal sudah terisi.
+                        $loggerDisabled = $matchLocked || $scheduleMissing;
                     @endphp
                     @if($isTie)
                         <div class="text-slate-300 text-sm leading-tight space-y-2">
@@ -158,17 +168,74 @@
                             @endif
                         </div>
                     </div>
-                    <div class="flex justify-end gap-2">
-                        <button type="button" data-match-edit-toggle="match-{{ $match['id'] }}" class="inline-flex items-center justify-center rounded-2xl border border-slate-700 bg-slate-800 px-3 py-2 text-sm font-semibold text-slate-100 hover:border-slate-600 hover:bg-slate-700 {{ $editLocked ? 'opacity-50 cursor-not-allowed' : '' }}" {{ $editLocked ? 'disabled' : '' }}>Edit Match</button>
+                    <div class="flex flex-wrap justify-end gap-2">
+                        {{-- N5 — Edit khusus Skor --}}
+                        <button type="button" data-match-edit-toggle="score-{{ $match['id'] }}" class="inline-flex items-center justify-center rounded-2xl border border-slate-700 bg-slate-800 px-3 py-2 text-sm font-semibold text-slate-100 hover:border-slate-600 hover:bg-slate-700 {{ $editLocked ? 'opacity-50 cursor-not-allowed' : '' }}" {{ $editLocked ? 'disabled' : '' }}>Edit Skor</button>
+                        {{-- N6 — Jadwal khusus tanggal/waktu --}}
+                        <button type="button" data-match-edit-toggle="schedule-{{ $match['id'] }}" class="inline-flex items-center justify-center rounded-2xl border border-slate-700 bg-slate-800 px-3 py-2 text-sm font-semibold text-slate-100 hover:border-slate-600 hover:bg-slate-700 {{ $scheduleLocked ? 'opacity-50 cursor-not-allowed' : '' }}" {{ $scheduleLocked ? 'disabled' : '' }}>Jadwal</button>
+                        {{-- N6 — Live Logger nonaktif sampai jadwal diisi --}}
                         <form method="POST" action="{{ route('tournaments.matches.liveLogger', ['tournament' => $tournament, 'match' => $match['logger_match_id'] ?? $match['id']]) }}" class="inline-block">
                             @csrf
-                            <button type="submit" class="inline-flex items-center justify-center rounded-2xl bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-500" {{ $matchLocked ? 'disabled' : '' }}>Live Match Event Logger</button>
+                            <button type="submit" class="inline-flex items-center justify-center rounded-2xl bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-500 {{ $loggerDisabled ? 'opacity-50 cursor-not-allowed' : '' }}" {{ $loggerDisabled ? 'disabled' : '' }}
+                                @if($scheduleMissing && ! $matchLocked) title="Isi jadwal (tanggal & waktu) dulu lewat tombol Jadwal." @endif>Live Match Event Logger</button>
                         </form>
                     </div>
                 </div>
-                <div id="match-{{ $match['id'] }}" class="hidden border-b border-slate-800 px-4 pb-4">
+                @php $editEntries = $isTie ? $match['legs'] : [$match]; @endphp
+
+                {{-- N5 — Panel EDIT SKOR (skor saja) --}}
+                <div id="score-{{ $match['id'] }}" class="hidden border-b border-slate-800 px-4 pb-4">
                     <div class="rounded-[28px] border border-slate-800 bg-slate-950 p-4 space-y-4">
-                        @php $editEntries = $isTie ? $match['legs'] : [$match]; @endphp
+                        @foreach($editEntries as $entryIndex => $entry)
+                            @php
+                                $entryStatusKey = match (strtolower(trim($entry['status'] ?? 'scheduled'))) {
+                                    'berlangsung', 'live', 'live_match' => 'live_match',
+                                    'selesai', 'full_time', 'fulltime', 'finished', 'ft' => 'full_time',
+                                    'penalty_shootout' => 'penalty_shootout',
+                                    default => 'scheduled',
+                                };
+                                $scoreLocked = ! $matchReady
+                                    || in_array($entryStatusKey, ['full_time', 'penalty_shootout'], true)
+                                    || ($isTie && $entryIndex === 1 && (($match['legs'][0]['status'] ?? '') !== 'full_time'));
+                                $scoreDisabled = $scoreLocked ? 'disabled' : '';
+                            @endphp
+                            <form method="POST" action="{{ route('tournaments.matches.score', ['tournament' => $tournament, 'match' => $entry['id']]) }}" class="grid gap-4 lg:grid-cols-2 {{ $entryIndex > 0 ? 'border-t border-slate-800 pt-4' : '' }}">
+                                @csrf
+                                @method('PATCH')
+                                @if($isTie)
+                                    <div class="lg:col-span-2 flex items-center gap-2">
+                                        <span class="inline-flex rounded-full bg-sky-500/10 px-3 py-1 text-[11px] font-semibold text-sky-200">Leg {{ $entryIndex + 1 }}</span>
+                                        <span class="text-sm text-slate-300">{{ $entry['left'] ?? 'TBD' }} vs {{ $entry['right'] ?? 'TBD' }}</span>
+                                        @if($isTie && $entryIndex === 1 && (($match['legs'][0]['status'] ?? '') !== 'full_time'))
+                                            <span class="text-xs text-slate-500">— menunggu Leg 1 selesai</span>
+                                        @endif
+                                    </div>
+                                @endif
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-400 mb-2" for="score_home_{{ $entry['id'] }}">Skor Home</label>
+                                    <input id="score_home_{{ $entry['id'] }}" name="home_score" type="number" min="0" value="{{ isset($entry['score_left']) ? $entry['score_left'] : '' }}" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" required {{ $scoreDisabled }} />
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-400 mb-2" for="score_away_{{ $entry['id'] }}">Skor Away</label>
+                                    <input id="score_away_{{ $entry['id'] }}" name="away_score" type="number" min="0" value="{{ isset($entry['score_right']) ? $entry['score_right'] : '' }}" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" required {{ $scoreDisabled }} />
+                                </div>
+                                <div class="lg:col-span-2 flex flex-col gap-3">
+                                    <div class="text-slate-400 text-sm">
+                                        Mengisi skor akan menutup laga sebagai <strong>Full Time</strong>. Untuk hasil seri di babak gugur, gunakan adu penalti via Live Match Logger.
+                                    </div>
+                                    <div class="flex flex-wrap gap-2 justify-end">
+                                        <button type="button" data-match-edit-toggle="score-{{ $match['id'] }}" class="rounded-2xl border border-slate-700 bg-slate-800 px-4 py-2 text-sm font-semibold text-slate-100 hover:border-slate-600 hover:bg-slate-700">Tutup</button>
+                                        <button type="submit" class="rounded-2xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500" {{ $scoreDisabled }}>Simpan Skor{{ $isTie ? ' Leg ' . ($entryIndex + 1) : '' }}</button>
+                                    </div>
+                                </div>
+                            </form>
+                        @endforeach
+                    </div>
+                </div>
+
+                {{-- N6 — Panel JADWAL (tanggal/waktu/status saja) --}}
+                <div id="schedule-{{ $match['id'] }}" class="hidden border-b border-slate-800 px-4 pb-4">
+                    <div class="rounded-[28px] border border-slate-800 bg-slate-950 p-4 space-y-4">
                         @foreach($editEntries as $entryIndex => $entry)
                             @php
                                 $entryDateTime = !empty($entry['datetime']) ? \Carbon\Carbon::parse($entry['datetime']) : \Carbon\Carbon::now();
@@ -178,54 +245,42 @@
                                     'penalty_shootout' => 'penalty_shootout',
                                     default => 'scheduled',
                                 };
-                                $entryLocked = ! $matchReady
+                                $schedEntryLocked = ! $matchReady
                                     || in_array($entryStatusKey, ['full_time', 'penalty_shootout'], true)
                                     || ($isTie && $entryIndex === 1 && (($match['legs'][0]['status'] ?? '') !== 'full_time'));
-                                $entryDisabled = $entryLocked ? 'disabled' : '';
+                                $schedEntryDisabled = $schedEntryLocked ? 'disabled' : '';
                             @endphp
-                            <form method="POST" action="{{ route('tournaments.matches.update', ['tournament' => $tournament, 'match' => $entry['id']]) }}" class="grid gap-4 lg:grid-cols-3 {{ $entryIndex > 0 ? 'border-t border-slate-800 pt-4' : '' }}">
+                            <form method="POST" action="{{ route('tournaments.matches.schedule', ['tournament' => $tournament, 'match' => $entry['id']]) }}" class="grid gap-4 lg:grid-cols-3 {{ $entryIndex > 0 ? 'border-t border-slate-800 pt-4' : '' }}">
                                 @csrf
                                 @method('PATCH')
                                 @if($isTie)
                                     <div class="lg:col-span-3 flex items-center gap-2">
                                         <span class="inline-flex rounded-full bg-sky-500/10 px-3 py-1 text-[11px] font-semibold text-sky-200">Leg {{ $entryIndex + 1 }}</span>
                                         <span class="text-sm text-slate-300">{{ $entry['left'] ?? 'TBD' }} vs {{ $entry['right'] ?? 'TBD' }}</span>
-                                        @if($isTie && $entryIndex === 1 && (($match['legs'][0]['status'] ?? '') !== 'full_time'))
-                                            <span class="text-xs text-slate-500">— menunggu Leg 1 selesai</span>
-                                        @endif
                                     </div>
                                 @endif
                                 <div>
                                     <label class="block text-xs font-semibold text-slate-400 mb-2" for="match_date_{{ $entry['id'] }}">Tanggal Pertandingan</label>
-                                    <input id="match_date_{{ $entry['id'] }}" name="match_date" type="date" value="{{ $entryDateTime->format('Y-m-d') }}" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" required {{ $entryDisabled }} />
+                                    <input id="match_date_{{ $entry['id'] }}" name="match_date" type="date" value="{{ $entryDateTime->format('Y-m-d') }}" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" required {{ $schedEntryDisabled }} />
                                 </div>
                                 <div>
                                     <label class="block text-xs font-semibold text-slate-400 mb-2" for="match_time_{{ $entry['id'] }}">Waktu Pertandingan</label>
-                                    <input id="match_time_{{ $entry['id'] }}" name="match_time" type="time" value="{{ $entryDateTime->format('H:i') }}" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" required {{ $entryDisabled }} />
+                                    <input id="match_time_{{ $entry['id'] }}" name="match_time" type="time" value="{{ $entryDateTime->format('H:i') }}" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" required {{ $schedEntryDisabled }} />
                                 </div>
                                 <div>
                                     <label class="block text-xs font-semibold text-slate-400 mb-2" for="match_status_{{ $entry['id'] }}">Status Laga</label>
-                                    <select id="match_status_{{ $entry['id'] }}" name="match_status" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" required {{ $entryDisabled }}>
+                                    <select id="match_status_{{ $entry['id'] }}" name="match_status" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" required {{ $schedEntryDisabled }}>
                                         <option value="scheduled" {{ $entryStatusKey === 'scheduled' ? 'selected' : '' }}>Scheduled</option>
                                         <option value="live_match" {{ $entryStatusKey === 'live_match' ? 'selected' : '' }}>Live Match</option>
-                                        <option value="full_time" {{ $entryStatusKey === 'full_time' ? 'selected' : '' }}>Full Time</option>
                                     </select>
-                                </div>
-                                <div>
-                                    <label class="block text-xs font-semibold text-slate-400 mb-2" for="match_home_score_{{ $entry['id'] }}">Skor Home</label>
-                                    <input id="match_home_score_{{ $entry['id'] }}" name="home_score" type="number" min="0" value="{{ isset($entry['score_left']) ? $entry['score_left'] : '' }}" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" {{ $entryDisabled }} />
-                                </div>
-                                <div>
-                                    <label class="block text-xs font-semibold text-slate-400 mb-2" for="match_away_score_{{ $entry['id'] }}">Skor Away</label>
-                                    <input id="match_away_score_{{ $entry['id'] }}" name="away_score" type="number" min="0" value="{{ isset($entry['score_right']) ? $entry['score_right'] : '' }}" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" {{ $entryDisabled }} />
                                 </div>
                                 <div class="lg:col-span-3 flex flex-col gap-3">
                                     <div class="text-slate-400 text-sm">
-                                        Edit hanya tanggal, waktu, dan status pertandingan. Skor disimpan otomatis melalui Live Match Logger.
+                                        Atur tanggal, waktu, dan status laga. Skor diisi lewat tombol <strong>Edit Skor</strong> atau Live Match Logger.
                                     </div>
                                     <div class="flex flex-wrap gap-2 justify-end">
-                                        <button type="button" data-match-edit-toggle="match-{{ $match['id'] }}" class="rounded-2xl border border-slate-700 bg-slate-800 px-4 py-2 text-sm font-semibold text-slate-100 hover:border-slate-600 hover:bg-slate-700">Tutup</button>
-                                        <button type="submit" class="rounded-2xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500" {{ $entryDisabled }}>Simpan{{ $isTie ? ' Leg ' . ($entryIndex + 1) : '' }}</button>
+                                        <button type="button" data-match-edit-toggle="schedule-{{ $match['id'] }}" class="rounded-2xl border border-slate-700 bg-slate-800 px-4 py-2 text-sm font-semibold text-slate-100 hover:border-slate-600 hover:bg-slate-700">Tutup</button>
+                                        <button type="submit" class="rounded-2xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500" {{ $schedEntryDisabled }}>Simpan Jadwal{{ $isTie ? ' Leg ' . ($entryIndex + 1) : '' }}</button>
                                     </div>
                                 </div>
                             </form>
@@ -241,3 +296,21 @@
         </div>
     </div>
 </div>
+
+{{-- N5/N6 — Handler toggle panel Edit Skor & Jadwal. Memakai event delegation
+     agar bekerja di semua halaman yang menyertakan partial ini (league,
+     league-playoff, bracket, manage). Dibinding sekali via flag global; di
+     halaman 'manage' yang sudah punya handler sendiri, flag ini mencegah
+     double-toggle. --}}
+<script>
+(function () {
+    if (window.__matchTableToggleBound) return;
+    window.__matchTableToggleBound = true;
+    document.addEventListener('click', function (e) {
+        const btn = e.target.closest('[data-match-edit-toggle]');
+        if (!btn) return;
+        const target = document.getElementById(btn.getAttribute('data-match-edit-toggle'));
+        if (target) target.classList.toggle('hidden');
+    });
+})();
+</script>

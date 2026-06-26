@@ -246,18 +246,10 @@
 @push('scripts')
     <script>
         document.addEventListener('DOMContentLoaded', function () {
-            const editButtons = document.querySelectorAll('[data-match-edit-toggle]');
-            editButtons.forEach(button => {
-                button.addEventListener('click', function () {
-                    const targetId = this.getAttribute('data-match-edit-toggle');
-                    const target = document.getElementById(targetId);
-                    if (!target) {
-                        return;
-                    }
-
-                    target.classList.toggle('hidden');
-                });
-            });
+            // N5/N6 — toggle panel Edit Skor/Jadwal kini ditangani secara terpusat
+            // (event delegation) di dalam partial match-table agar konsisten di
+            // semua halaman jadwal. Handler per-tombol lama dihapus untuk hindari
+            // double-toggle.
 
             const modal = document.getElementById('liveMatchEventLoggerModal');
             const closeModal = document.getElementById('closeLiveMatchEventLoggerModal');
