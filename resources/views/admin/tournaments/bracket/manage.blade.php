@@ -188,6 +188,15 @@
                         // layak (bracket terlalu kecil/struktur ganjil), $mirror['enabled']
                         // false → render fallback layout satu arah lama.
                         $mirror = \App\Services\MatchGenerator::splitBracketColumnsMirror($bracketColumns);
+
+                        // Posisi vertikal khusus mirror: bagan mengerucut ke PUSAT
+                        // (tengah vertikal), Final tepat di tengah kanvas.
+                        $mirrorTops = null;
+                        $mirrorCanvasHeight = $bracketCanvasHeight;
+                        if ($mirror['enabled']) {
+                            $mirrorTops = \App\Services\MatchGenerator::computeMirrorCardTops($mirror, $rowUnit, $cardHeight);
+                            $mirrorCanvasHeight = $mirrorTops['height'] + $columnHeaderHeight;
+                        }
                     @endphp
 
                     {{-- N8 — hint scroll horizontal saat bagan melebar (tim banyak) --}}
@@ -201,32 +210,30 @@
                                 <svg id="bracketConnectorSvg" class="absolute inset-0 w-full h-full pointer-events-none" xmlns="http://www.w3.org/2000/svg"></svg>
 
                                 @if($mirror['enabled'])
-                                    {{-- N14 — layout mirror dua sisi: kiri → FINAL (tengah) ← kanan --}}
+                                    {{-- N14 — layout mirror dua sisi: kiri → FINAL (tengah) ← kanan.
+                                         Posisi vertikal mengerucut ke pusat ($mirrorTops). --}}
                                     <div class="relative flex gap-12 w-full items-start justify-center">
                                         {{-- Sisi kiri: ronde awal → mendekati final --}}
-                                        @foreach($mirror['left'] as $column)
-                                            <div class="relative flex-shrink-0 w-[200px]" style="min-height: {{ $bracketCanvasHeight }}px;">
+                                        @foreach($mirror['left'] as $leftColIdx => $column)
+                                            <div class="relative flex-shrink-0 w-[200px]" style="min-height: {{ $mirrorCanvasHeight }}px;">
                                                 <div class="mb-4">
                                                     <p class="text-[10px] uppercase tracking-[0.24em] text-slate-400 font-semibold">{{ $column['label'] }} ({{ $column['teams'] }} Tim)</p>
                                                 </div>
-                                                @foreach($column['matches'] as $match)
+                                                @foreach($column['matches'] as $localMatchIdx => $match)
                                                     @include('admin.tournaments.bracket.partials.match-card', [
                                                         'match' => $match,
                                                         'column' => $column,
                                                         'matchIndex' => $match['match_index'],
-                                                        'top' => ($cardTops[$match['column_index']][$match['match_index']] ?? 0) + $columnHeaderHeight,
+                                                        'top' => ($mirrorTops['left'][$leftColIdx][$localMatchIdx] ?? 0) + $columnHeaderHeight,
                                                         'side' => 'left',
                                                     ])
                                                 @endforeach
                                             </div>
                                         @endforeach
 
-                                        {{-- Zona tengah: FINAL + label juara --}}
+                                        {{-- Zona tengah: FINAL + label juara, dipusatkan vertikal --}}
                                         @php $finalMatch = $mirror['final']['matches'][0] ?? null; @endphp
-                                        <div class="relative flex-shrink-0 w-[200px]" data-final-column="1" style="min-height: {{ $bracketCanvasHeight }}px;">
-                                            <div class="mb-4 text-center">
-                                                <p class="text-[10px] uppercase tracking-[0.3em] text-amber-300 font-bold">🏆 {{ $mirror['final']['label'] }}</p>
-                                            </div>
+                                        <div class="relative flex-shrink-0 w-[200px] mx-6" data-final-column="1" style="min-height: {{ $mirrorCanvasHeight }}px;">
                                             @if($finalMatch)
                                                 @php
                                                     $finalScore = $bracketScores[$finalMatch['id']] ?? null;
@@ -236,16 +243,21 @@
                                                     } elseif (($finalScore['winner_side'] ?? null) === 'away') {
                                                         $finalChampion = data_get($assignedMatches[$finalMatch['id']] ?? null, 'awayTeam.team.name');
                                                     }
+                                                    $finalTopPx = ($mirrorTops['final'] ?? 0) + $columnHeaderHeight;
                                                 @endphp
+                                                {{-- Label FINAL tepat di atas kartu final --}}
+                                                <div class="absolute left-0 right-0 text-center" style="top: {{ max($finalTopPx - 28, 0) }}px;">
+                                                    <p class="text-[10px] uppercase tracking-[0.3em] text-amber-300 font-bold">🏆 {{ $mirror['final']['label'] }}</p>
+                                                </div>
                                                 @include('admin.tournaments.bracket.partials.match-card', [
                                                     'match' => $finalMatch,
                                                     'column' => $mirror['final'],
                                                     'matchIndex' => $finalMatch['match_index'],
-                                                    'top' => ($cardTops[$finalMatch['column_index']][$finalMatch['match_index']] ?? 0) + $columnHeaderHeight,
+                                                    'top' => $finalTopPx,
                                                     'side' => 'final',
                                                 ])
                                                 @if($finalChampion)
-                                                    <div class="absolute left-0 right-0 z-10 flex flex-col items-center" style="top: {{ ($cardTops[$finalMatch['column_index']][$finalMatch['match_index']] ?? 0) + $columnHeaderHeight + 200 }}px;">
+                                                    <div class="absolute left-0 right-0 z-10 flex flex-col items-center" style="top: {{ $finalTopPx + 200 }}px;">
                                                         <span class="text-[9px] uppercase tracking-[0.3em] text-amber-300 font-semibold">Juara</span>
                                                         <span class="mt-1 rounded-full bg-amber-500/15 border border-amber-500/40 px-3 py-1 text-sm font-bold text-amber-200">{{ $finalChampion }}</span>
                                                     </div>
@@ -254,17 +266,17 @@
                                         </div>
 
                                         {{-- Sisi kanan: mendekati final → ronde awal (cermin) --}}
-                                        @foreach($mirror['right'] as $column)
-                                            <div class="relative flex-shrink-0 w-[200px]" style="min-height: {{ $bracketCanvasHeight }}px;">
+                                        @foreach($mirror['right'] as $rightColIdx => $column)
+                                            <div class="relative flex-shrink-0 w-[200px]" style="min-height: {{ $mirrorCanvasHeight }}px;">
                                                 <div class="mb-4 text-right">
                                                     <p class="text-[10px] uppercase tracking-[0.24em] text-slate-400 font-semibold">{{ $column['label'] }} ({{ $column['teams'] }} Tim)</p>
                                                 </div>
-                                                @foreach($column['matches'] as $match)
+                                                @foreach($column['matches'] as $localMatchIdx => $match)
                                                     @include('admin.tournaments.bracket.partials.match-card', [
                                                         'match' => $match,
                                                         'column' => $column,
                                                         'matchIndex' => $match['match_index'],
-                                                        'top' => ($cardTops[$match['column_index']][$match['match_index']] ?? 0) + $columnHeaderHeight,
+                                                        'top' => ($mirrorTops['right'][$rightColIdx][$localMatchIdx] ?? 0) + $columnHeaderHeight,
                                                         'side' => 'right',
                                                     ])
                                                 @endforeach

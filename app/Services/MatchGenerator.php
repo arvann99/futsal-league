@@ -919,6 +919,103 @@ class MatchGenerator
     }
 
     /**
+     * N14 — Hitung posisi vertikal (top px) kartu untuk layout mirror, sehingga
+     * bagan benar-benar mengerucut ke PUSAT (tengah horizontal & vertikal) ala
+     * Piala Dunia: ronde terluar menyebar penuh atas→bawah, tiap ronde lebih
+     * dalam berada di tengah dua pengumpangnya, dan FINAL tepat di tengah kanvas.
+     *
+     * Input $mirror = hasil splitBracketColumnsMirror (enabled=true).
+     *
+     * Return:
+     *   [
+     *     'left'   => [ localColumnIndex => [ localMatchIndex => top ] ],
+     *     'right'  => [ localColumnIndex => [ localMatchIndex => top ] ],
+     *     'final'  => top,            // posisi top kartu final (tengah)
+     *     'height' => canvasHeight,   // tinggi kanvas total
+     *   ]
+     *
+     * Catatan: kolom sisi KIRI urut ronde awal→dalam (index 0 = terluar).
+     * Kolom sisi KANAN sudah ter-reverse di split (index 0 = paling dekat final,
+     * paling dalam), jadi ronde terluar kanan ada di index terakhir.
+     */
+    public static function computeMirrorCardTops(array $mirror, float $rowUnit, float $cardHeight): array
+    {
+        // Hitung tops satu sisi. $columnsOutwardFirst: kolom urut dari ronde
+        // TERLUAR (paling banyak match) ke ronde TERDALAM (mendekati final).
+        $computeSide = function (array $columnsOutwardFirst) use ($rowUnit): array {
+            $tops = []; // [colIdx => [matchIdx => top]]
+
+            // Ronde terluar: sebar merata berjarak rowUnit.
+            $outer = $columnsOutwardFirst[0]['matches'] ?? [];
+            foreach (array_values($outer) as $i => $_) {
+                $tops[0][$i] = $i * $rowUnit;
+            }
+
+            // Ronde berikutnya: tiap kartu = tengah dua pengumpannya (berurutan
+            // berpasangan dari ronde sebelumnya). Bila ganjil, sisa kartu mengikuti
+            // pengumpan tunggalnya.
+            for ($c = 1; $c < count($columnsOutwardFirst); $c++) {
+                $prevTops = array_values($tops[$c - 1] ?? []);
+                $curMatches = array_values($columnsOutwardFirst[$c]['matches'] ?? []);
+
+                foreach ($curMatches as $i => $_) {
+                    $a = $prevTops[$i * 2] ?? null;
+                    $b = $prevTops[$i * 2 + 1] ?? $a;
+
+                    if ($a === null) {
+                        // fallback: lanjut menumpuk
+                        $a = ($i > 0 ? $tops[$c][$i - 1] + $rowUnit : 0);
+                        $b = $a;
+                    }
+
+                    $tops[$c][$i] = ($a + $b) / 2;
+                }
+            }
+
+            return $tops;
+        };
+
+        // Sisi kiri: index 0 sudah terluar → langsung.
+        $leftTops = $computeSide($mirror['left']);
+
+        // Sisi kanan: index 0 = terdalam (sudah reverse di split). Untuk
+        // perhitungan, balik dulu agar terluar di depan, lalu petakan kembali.
+        $rightOutwardFirst = array_reverse($mirror['right']);
+        $rightTopsOutward = $computeSide($rightOutwardFirst);
+        // Kembalikan ke indeks asli sisi kanan (0 = terdalam).
+        $rightCount = count($mirror['right']);
+        $rightTops = [];
+        foreach ($rightTopsOutward as $outIdx => $matchTops) {
+            $rightTops[$rightCount - 1 - $outIdx] = $matchTops;
+        }
+
+        // Final = tengah antara kartu terdalam kiri & kanan (keduanya simetris).
+        $leftDeepest = end($leftTops);                 // ronde terdalam kiri
+        $rightDeepest = $rightTops[0] ?? [];           // ronde terdalam kanan (idx 0)
+        $leftMid = $leftDeepest ? array_sum($leftDeepest) / count($leftDeepest) : 0;
+        $rightMid = $rightDeepest ? array_sum($rightDeepest) / count($rightDeepest) : 0;
+        $finalTop = ($leftMid + $rightMid) / 2;
+
+        // Tinggi kanvas: dari semua tops + tinggi kartu.
+        $maxTop = $finalTop;
+        foreach ([$leftTops, $rightTops] as $sideTops) {
+            foreach ($sideTops as $matchTops) {
+                foreach ($matchTops as $t) {
+                    $maxTop = max($maxTop, $t);
+                }
+            }
+        }
+        $height = $maxTop + $cardHeight;
+
+        return [
+            'left' => $leftTops,
+            'right' => $rightTops,
+            'final' => $finalTop,
+            'height' => $height,
+        ];
+    }
+
+    /**
      * Urutan seed standar untuk bracket berukuran $slotCount (pangkat 2).
      * Mengembalikan array nomor seed (1 = unggulan teratas) sesuai posisi slot,
      * sehingga seed teratas bertemu seed terlemah dan bye selalu jatuh pada
