@@ -794,6 +794,131 @@ class MatchGenerator
     }
 
     /**
+     * N14 — Pecah kolom bracket (urut ronde awal → Final) menjadi model
+     * dua sisi (mirror) ala Piala Dunia: separuh match tiap ronde mengisi sisi
+     * KIRI (mengerucut ke kanan), separuh lagi sisi KANAN (mengerucut ke kiri),
+     * bertemu di FINAL yang berada di tengah.
+     *
+     * Strategi pembelahan: per-ronde 50/50. Untuk tiap ronde feeder, match
+     * dibelah dua — paruh pertama ke kiri, paruh kedua ke kanan (kiri dapat
+     * satu lebih banyak bila jumlahnya ganjil). Final (kolom terakhir, 1 match)
+     * ditaruh di zona tengah.
+     *
+     * Tiap entri match diperkaya dengan:
+     *   - 'column_index' : indeks kolom asli (untuk lookup $cardTops)
+     *   - 'match_index'  : indeks match dalam kolom asli (untuk lookup $cardTops)
+     *   - 'side'         : 'left' | 'right' | 'final'
+     *
+     * Return:
+     *   [
+     *     'enabled' => bool,            // false bila tak layak mirror (fallback)
+     *     'left'    => [ kolom... ],    // urut ronde awal → mendekati final (L→R)
+     *     'final'   => kolom|null,      // kolom final (1 match) di tengah
+     *     'right'   => [ kolom... ],    // urut mendekati final → ronde awal (L→R)
+     *   ]
+     *
+     * Struktur tiap "kolom" sama seperti input ($column['label'], 'teams',
+     * 'matches'), dengan 'matches' yang sudah diperkaya field di atas.
+     */
+    public static function splitBracketColumnsMirror(array $bracketColumns): array
+    {
+        $disabled = ['enabled' => false, 'left' => [], 'final' => null, 'right' => []];
+
+        $columnCount = count($bracketColumns);
+
+        // Perlu minimal: 1 ronde feeder + Final (≥2 kolom) agar mirror bermakna.
+        if ($columnCount < 2) {
+            return $disabled;
+        }
+
+        $columns = array_values($bracketColumns);
+        $finalColumn = $columns[$columnCount - 1];
+
+        // Final harus tepat satu match agar bisa di tengah.
+        if (count($finalColumn['matches'] ?? []) !== 1) {
+            return $disabled;
+        }
+
+        $feederColumns = array_slice($columns, 0, $columnCount - 1);
+
+        $leftColumns = [];
+        $rightColumns = [];
+
+        foreach ($feederColumns as $columnIndex => $column) {
+            $matches = array_values($column['matches'] ?? []);
+            $total = count($matches);
+
+            if ($total === 0) {
+                continue;
+            }
+
+            // Kiri dapat ceil(total/2), kanan sisanya.
+            $leftCount = (int) ceil($total / 2);
+
+            $leftMatches = [];
+            $rightMatches = [];
+
+            foreach ($matches as $matchIndex => $match) {
+                $match['column_index'] = $columnIndex;
+                $match['match_index'] = $matchIndex;
+
+                if ($matchIndex < $leftCount) {
+                    $match['side'] = 'left';
+                    $leftMatches[] = $match;
+                } else {
+                    $match['side'] = 'right';
+                    $rightMatches[] = $match;
+                }
+            }
+
+            if ($leftMatches !== []) {
+                $leftColumns[] = [
+                    'label' => $column['label'],
+                    'teams' => $column['teams'] ?? ($total * 2),
+                    'matches' => $leftMatches,
+                ];
+            }
+
+            if ($rightMatches !== []) {
+                $rightColumns[] = [
+                    'label' => $column['label'],
+                    'teams' => $column['teams'] ?? ($total * 2),
+                    'matches' => $rightMatches,
+                ];
+            }
+        }
+
+        // Butuh kedua sisi terisi; jika salah satu kosong (mis. hanya 1 match
+        // di ronde pertama), mirror tak seimbang → fallback ke satu arah.
+        if ($leftColumns === [] || $rightColumns === []) {
+            return $disabled;
+        }
+
+        // Sisi kanan dirender dari ronde yang paling dekat Final (paling kanan
+        // dalam urutan feeder) menuju ronde awal — supaya mengerucut ke tengah.
+        $rightColumns = array_reverse($rightColumns);
+
+        $finalMatches = [];
+        foreach (array_values($finalColumn['matches'] ?? []) as $matchIndex => $match) {
+            $match['column_index'] = $columnCount - 1;
+            $match['match_index'] = $matchIndex;
+            $match['side'] = 'final';
+            $finalMatches[] = $match;
+        }
+
+        return [
+            'enabled' => true,
+            'left' => $leftColumns,
+            'final' => [
+                'label' => $finalColumn['label'],
+                'teams' => $finalColumn['teams'] ?? 2,
+                'matches' => $finalMatches,
+            ],
+            'right' => $rightColumns,
+        ];
+    }
+
+    /**
      * Urutan seed standar untuk bracket berukuran $slotCount (pangkat 2).
      * Mengembalikan array nomor seed (1 = unggulan teratas) sesuai posisi slot,
      * sehingga seed teratas bertemu seed terlemah dan bye selalu jatuh pada
