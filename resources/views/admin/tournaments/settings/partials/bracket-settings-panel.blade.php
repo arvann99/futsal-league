@@ -126,13 +126,20 @@
                         </label>
                         <p class="text-xs text-slate-400">Jika hasil tetap seri setelah leg kedua, pemenang ditentukan melalui adu penalti (tanpa aturan gol tandang). Final dan perebutan tempat ketiga tetap satu pertandingan.</p>
                     </div>
-                    <label class="flex flex-col gap-3 p-4 bg-slate-800 rounded-xl cursor-pointer">
-                        <div class="flex items-center gap-3">
-                            <input type="checkbox" name="third_place" value="1" class="text-fuchsia-500 focus:ring-fuchsia-400" {{ $hasThirdPlace ? 'checked' : '' }}>
-                            <span class="text-sm text-slate-200">Sertakan perebutan tempat ketiga</span>
+                    @unless($isPureKnockout)
+                        <label class="flex flex-col gap-3 p-4 bg-slate-800 rounded-xl cursor-pointer">
+                            <div class="flex items-center gap-3">
+                                <input type="checkbox" name="third_place" value="1" class="text-fuchsia-500 focus:ring-fuchsia-400" {{ $hasThirdPlace ? 'checked' : '' }}>
+                                <span class="text-sm text-slate-200">Sertakan perebutan tempat ketiga</span>
+                            </div>
+                            <p class="text-xs text-slate-400">Jika dicentang, maka di Pengaturan Slot Bracket akan muncul babak "Third Place" yang diisi oleh runner-up semifinal.</p>
+                        </label>
+                    @else
+                        {{-- N10 — Sistem Turnamen (gugur murni) tidak memakai perebutan tempat ketiga --}}
+                        <div class="p-4 bg-slate-800/60 border border-slate-700 rounded-xl">
+                            <p class="text-sm text-slate-300">Perebutan tempat ketiga tidak tersedia pada Sistem Turnamen (gugur murni).</p>
                         </div>
-                        <p class="text-xs text-slate-400">Jika dicentang, maka di Pengaturan Slot Bracket akan muncul babak "Third Place" yang diisi oleh runner-up semifinal.</p>
-                    </label>
+                    @endunless
                 </div>
             </div>
             

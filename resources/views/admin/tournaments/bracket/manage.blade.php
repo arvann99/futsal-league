@@ -185,8 +185,13 @@
                         $qualifiedTeamOptions = $qualifiedTeamOptions ?? [];
                     @endphp
 
+                    {{-- N8 — hint scroll horizontal saat bagan melebar (tim banyak) --}}
+                    <p class="mb-2 flex items-center gap-2 text-xs text-slate-500 lg:hidden">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7l-4 5 4 5m8-10l4 5-4 5"></path></svg>
+                        Geser ke kiri/kanan untuk melihat seluruh bagan
+                    </p>
                     <div class="grid gap-4 mb-6 lg:grid-cols-[1fr_260px]">
-                        <div class="bg-slate-900 rounded-xl border border-slate-800 p-4 overflow-x-auto">
+                        <div class="bracket-scroll bg-slate-900 rounded-xl border border-slate-800 p-4 overflow-x-auto">
                             <div id="bracketConnectorLayout" class="relative min-w-max">
                                 <svg id="bracketConnectorSvg" class="absolute inset-0 w-full h-full pointer-events-none" xmlns="http://www.w3.org/2000/svg"></svg>
 
@@ -522,4 +527,15 @@
             setBracketMode(manual ? 'manual' : 'auto');
         }, 50);
     </script>
+@endpush
+
+@push('styles')
+<style>
+    /* N8 — scrollbar tipis & rapi untuk kontainer bagan yang melebar. */
+    .bracket-scroll { scrollbar-width: thin; scrollbar-color: #4f46e5 #1e293b; scroll-behavior: smooth; }
+    .bracket-scroll::-webkit-scrollbar { height: 10px; }
+    .bracket-scroll::-webkit-scrollbar-track { background: #1e293b; border-radius: 9999px; }
+    .bracket-scroll::-webkit-scrollbar-thumb { background: #4f46e5; border-radius: 9999px; }
+    .bracket-scroll::-webkit-scrollbar-thumb:hover { background: #6366f1; }
+</style>
 @endpush
