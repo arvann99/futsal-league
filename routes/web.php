@@ -65,6 +65,9 @@ Route::middleware(['auth', 'owns'])->group(function () {
     Route::get('/tournaments/{tournament}/settings', [TournamentController::class, 'settings'])->name('tournaments.settings');
     Route::get('/tournaments/{tournament}/manage-schedule', [TournamentController::class, 'manageSchedule'])->name('tournaments.manageSchedule');
     Route::patch('/tournaments/{tournament}/matches/{match}', [TournamentController::class, 'updateMatch'])->name('tournaments.matches.update');
+    // N5 — Edit khusus Skor; N6 — Jadwal khusus tanggal/waktu
+    Route::patch('/tournaments/{tournament}/matches/{match}/score', [TournamentController::class, 'updateScore'])->name('tournaments.matches.score');
+    Route::patch('/tournaments/{tournament}/matches/{match}/schedule', [TournamentController::class, 'updateSchedule'])->name('tournaments.matches.schedule');
     Route::post('/tournaments/{tournament}/matches/{match}/live-logger', [TournamentController::class, 'openLiveMatchLogger'])->name('tournaments.matches.liveLogger');
     Route::post('/tournaments/{tournament}/matches/{match}/events', [TournamentController::class, 'storeMatchEvent'])->name('tournaments.matches.events.store');
     Route::patch('/tournaments/{tournament}/matches/{match}/end', [TournamentController::class, 'endMatch'])->name('tournaments.matches.end');
@@ -150,4 +153,6 @@ Route::middleware([App\Http\Middleware\OfficialAuth::class])->group(function () 
     Route::delete('/official/officials/{official}', [App\Http\Controllers\OfficialTeamOfficialController::class, 'destroy'])->name('official.officials.destroy');
     Route::get('/official/schedule', [App\Http\Controllers\OfficialAuthController::class, 'schedule'])->name('official.schedule');
     Route::get('/official/standings', [App\Http\Controllers\OfficialStandingsController::class, 'index'])->name('official.standings');
+    // N4 — Official/Manager dapat melihat bagan/bracket (read-only)
+    Route::get('/official/bracket', [App\Http\Controllers\OfficialBracketController::class, 'index'])->name('official.bracket');
 });
