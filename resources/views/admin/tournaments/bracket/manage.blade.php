@@ -201,13 +201,20 @@
                         }
                     @endphp
 
-                    {{-- N8 — hint scroll horizontal saat bagan melebar (tim banyak) --}}
-                    <p class="mb-2 flex items-center gap-2 text-xs text-slate-500 lg:hidden">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7l-4 5 4 5m8-10l4 5-4 5"></path></svg>
-                        Geser ke kiri/kanan untuk melihat seluruh bagan
-                    </p>
+                    {{-- N8 — hint scroll horizontal + tombol Fullscreen --}}
+                    <div class="mb-2 flex items-center justify-between gap-3">
+                        <p class="flex items-center gap-2 text-xs text-slate-500 lg:invisible">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7l-4 5 4 5m8-10l4 5-4 5"></path></svg>
+                            Geser ke kiri/kanan untuk melihat seluruh bagan
+                        </p>
+                        <button type="button" id="bracketFullscreenBtn"
+                                class="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-violet-500 hover:bg-slate-700">
+                            <svg id="bracketFullscreenIcon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0-4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5"></path></svg>
+                            <span id="bracketFullscreenLabel">Layar Penuh</span>
+                        </button>
+                    </div>
                     <div class="grid gap-4 mb-6 lg:grid-cols-[1fr_260px]">
-                        <div class="bracket-scroll bg-slate-900 rounded-xl border border-slate-800 p-4 overflow-x-auto">
+                        <div id="bracketScrollContainer" class="bracket-scroll bg-slate-900 rounded-xl border border-slate-800 p-4 overflow-x-auto">
                             <div id="bracketConnectorLayout" class="relative min-w-max">
                                 <svg id="bracketConnectorSvg" class="absolute inset-0 w-full h-full pointer-events-none" xmlns="http://www.w3.org/2000/svg"></svg>
 
@@ -485,7 +492,44 @@
                 updateThirdPlacePanel();
             });
             setupBracketSlotSwapping();
+            setupBracketFullscreen();
         });
+
+        function setupBracketFullscreen() {
+            const container = document.getElementById('bracketScrollContainer');
+            const btn = document.getElementById('bracketFullscreenBtn');
+            const label = document.getElementById('bracketFullscreenLabel');
+            if (!container || !btn) return;
+
+            const redraw = () => {
+                // Tunggu layout fullscreen stabil sebelum menggambar ulang konektor.
+                setTimeout(() => {
+                    drawBracketConnections();
+                    updateThirdPlacePanel();
+                }, 120);
+            };
+
+            btn.addEventListener('click', () => {
+                const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+                if (!fsEl) {
+                    (container.requestFullscreen || container.webkitRequestFullscreen)?.call(container);
+                } else {
+                    (document.exitFullscreen || document.webkitExitFullscreen)?.call(document);
+                }
+            });
+
+            const onChange = () => {
+                const active = document.fullscreenElement === container
+                    || document.webkitFullscreenElement === container;
+                // Saat fullscreen: kontainer mengisi layar & bisa scroll dua arah.
+                container.classList.toggle('bracket-fullscreen', active);
+                if (label) label.textContent = active ? 'Keluar Layar Penuh' : 'Layar Penuh';
+                redraw();
+            };
+
+            document.addEventListener('fullscreenchange', onChange);
+            document.addEventListener('webkitfullscreenchange', onChange);
+        }
 
         function setupBracketSlotSwapping() {
             const selects = Array.from(document.querySelectorAll('select[name^="matches"]'));
@@ -544,5 +588,25 @@
     .bracket-scroll::-webkit-scrollbar-track { background: #1e293b; border-radius: 9999px; }
     .bracket-scroll::-webkit-scrollbar-thumb { background: #4f46e5; border-radius: 9999px; }
     .bracket-scroll::-webkit-scrollbar-thumb:hover { background: #6366f1; }
+
+    /* Mode layar penuh untuk bagan (Fullscreen API). Kontainer mengisi layar,
+       scroll dua arah, latar gelap, dengan padding lega. */
+    .bracket-fullscreen {
+        width: 100vw;
+        height: 100vh;
+        max-width: none;
+        overflow: auto;
+        padding: 2rem;
+        background: #0f172a;
+    }
+    /* Fallback browser yang memakai pseudo :fullscreen. */
+    #bracketScrollContainer:fullscreen,
+    #bracketScrollContainer:-webkit-full-screen {
+        width: 100vw;
+        height: 100vh;
+        overflow: auto;
+        padding: 2rem;
+        background: #0f172a;
+    }
 </style>
 @endpush
