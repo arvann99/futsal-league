@@ -192,4 +192,81 @@ class BracketViewService
             'headerHeight' => $headerHeight,
         ];
     }
+
+    /**
+     * Tentukan playoffMode efektif (atau null) untuk satu turnamen berdasarkan
+     * tipe kompetisi & opsi playoff, ATAU false bila turnamen tidak memakai
+     * babak gugur sama sekali (liga murni / league_playoff tanpa opsi aktif).
+     *
+     * @return string|null|false  string mode | null (tournament) | false (no bracket)
+     */
+    private function resolvePlayoffMode(array $settingValue)
+    {
+        $competitionType = $settingValue['competition_type'] ?? 'tournament';
+        $playoffOptions = $settingValue['playoff_options'] ?? [];
+
+        // Liga murni tidak punya bracket.
+        if ($competitionType === 'league') {
+            return false;
+        }
+
+        if ($competitionType === 'league_playoff') {
+            $hasPromotion = in_array('promotion', $playoffOptions, true);
+            $hasRelegation = in_array('relegation', $playoffOptions, true);
+
+            // Tanpa opsi playoff → tak ada bracket.
+            if (! $hasPromotion && ! $hasRelegation) {
+                return false;
+            }
+
+            // Kedua opsi → default promosi.
+            return $hasPromotion ? 'promotion' : 'relegation';
+        }
+
+        return null;
+    }
+
+    /**
+     * Apakah turnamen memiliki bagan gugur yang bisa dirender? Murah — untuk
+     * menentukan tampil/tidaknya menu/tab Bracket. Konsisten dengan buildBracket().
+     */
+    public function hasRenderableBracket(Tournament $tournament): bool
+    {
+        return $this->buildBracket($tournament) !== null;
+    }
+
+    /**
+     * Susun seluruh data tampilan bracket satu turnamen (read-only), atau null
+     * bila turnamen tidak memakai babak gugur / belum punya struktur. Sumber
+     * tunggal yang dipakai portal Official & Public agar gate tab dan render
+     * tidak pernah berbeda.
+     */
+    public function buildBracket(Tournament $tournament): ?array
+    {
+        $setting = $this->bracketSetting($tournament);
+        $settingValue = $setting?->value ?? [];
+
+        $playoffMode = $this->resolvePlayoffMode($settingValue);
+        if ($playoffMode === false) {
+            return null;
+        }
+
+        $built = $this->columns($settingValue, $playoffMode);
+        if (empty($built['columns'])) {
+            return null;
+        }
+
+        return [
+            'tournament' => $tournament,
+            'competition_type' => $settingValue['competition_type'] ?? 'tournament',
+            'columns' => $built['columns'],
+            'third_place_round' => $built['thirdPlaceRound'],
+            'card_tops' => $built['cardTops'],
+            'canvas_height' => $built['canvasHeight'],
+            'row_unit' => $built['rowUnit'],
+            'header_height' => $built['headerHeight'],
+            'assigned_matches' => $this->assignedMatches($tournament, $playoffMode),
+            'scores' => $this->scoreSummaries($tournament, $playoffMode),
+        ];
+    }
 }

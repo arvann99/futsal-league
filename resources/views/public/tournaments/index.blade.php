@@ -1,23 +1,23 @@
 @extends('public.layouts.app')
 
-@section('title', 'Statistik Turnamen')
+@section('title', 'Portal Turnamen')
 
 @section('content')
     <div class="mb-6">
-        <p class="text-xs uppercase tracking-[0.35em] text-emerald-300">Statistik Publik</p>
-        <h1 class="mt-3 text-3xl font-semibold text-white">Statistik Turnamen</h1>
-        <p class="mt-2 text-sm text-slate-400">Pilih turnamen untuk melihat top skor, kartu, dan statistik tim.</p>
+        <p class="text-xs uppercase tracking-[0.35em] text-emerald-300">Portal Publik</p>
+        <h1 class="mt-3 text-3xl font-semibold text-white">Turnamen</h1>
+        <p class="mt-2 text-sm text-slate-400">Pilih turnamen untuk melihat jadwal, klasemen, bagan, statistik, dan roster (hanya-baca).</p>
     </div>
 
     @if($tournaments->isEmpty())
         <div class="rounded-2xl border border-slate-800 bg-slate-900/60 p-10 text-center text-slate-400">
             <p class="text-lg font-semibold text-white">Belum ada turnamen yang dapat dilihat.</p>
-            <p class="mt-2 text-sm">Statistik akan tersedia setelah turnamen memiliki jadwal pertandingan.</p>
+            <p class="mt-2 text-sm">Portal akan tersedia setelah turnamen memiliki jadwal pertandingan.</p>
         </div>
     @else
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             @foreach($tournaments as $tournament)
-                <a href="{{ route('public.statistics.show', $tournament) }}"
+                <a href="{{ route('public.tournaments.overview', $tournament) }}"
                    class="group rounded-2xl border border-slate-800 bg-slate-900/60 p-5 transition hover:-translate-y-0.5 hover:border-emerald-400/40 hover:bg-slate-900">
                     <div class="flex items-start justify-between gap-3">
                         <div class="min-w-0">

@@ -133,9 +133,18 @@ Route::get('/public/login', function () {
     ]);
 })->name('public.login');
 
-// N13 — Statistik turnamen view-only untuk Tamu/Visitor (tanpa login)
-Route::get('/public/statistics', [App\Http\Controllers\PublicStatisticsController::class, 'index'])->name('public.statistics.index');
-Route::get('/public/tournaments/{tournament}/statistics', [App\Http\Controllers\PublicStatisticsController::class, 'show'])->name('public.statistics.show');
+// Portal Publik per-turnamen (view-only, tanpa login) — SATU pintu: pilih
+// turnamen lalu menu di dalam (nav bawah) mirip Manager. Statistik & Bagan
+// adalah TAB di dalam portal, bukan halaman daftar terpisah.
+// N13 — statistik turnamen; bagan/bracket dipakai TournamentStatisticsService &
+// BracketViewService yang sama dengan portal lain.
+Route::get('/public/tournaments', [App\Http\Controllers\PublicTournamentController::class, 'index'])->name('public.tournaments.index');
+Route::get('/public/tournaments/{tournament}', [App\Http\Controllers\PublicTournamentController::class, 'overview'])->name('public.tournaments.overview');
+Route::get('/public/tournaments/{tournament}/jadwal', [App\Http\Controllers\PublicTournamentController::class, 'schedule'])->name('public.tournaments.schedule');
+Route::get('/public/tournaments/{tournament}/klasemen', [App\Http\Controllers\PublicTournamentController::class, 'standings'])->name('public.tournaments.standings');
+Route::get('/public/tournaments/{tournament}/bracket', [App\Http\Controllers\PublicBracketController::class, 'show'])->name('public.bracket.show');
+Route::get('/public/tournaments/{tournament}/statistik', [App\Http\Controllers\PublicTournamentController::class, 'statistics'])->name('public.tournaments.statistics');
+Route::get('/public/tournaments/{tournament}/roster', [App\Http\Controllers\PublicTournamentController::class, 'roster'])->name('public.tournaments.roster');
 
 Route::get('/official/login', [App\Http\Controllers\OfficialAuthController::class, 'showLogin'])->name('official.login');
 Route::post('/official/login', [App\Http\Controllers\OfficialAuthController::class, 'login'])->name('official.login.submit');

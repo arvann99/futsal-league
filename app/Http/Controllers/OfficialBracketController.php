@@ -46,47 +46,15 @@ class OfficialBracketController extends Controller
      */
     private function buildBracketFor(Tournament $tournament, Team $team): ?array
     {
-        $setting = $this->bracketView->bracketSetting($tournament);
-        $settingValue = $setting?->value ?? [];
-        $competitionType = $settingValue['competition_type'] ?? 'tournament';
-        $playoffOptions = $settingValue['playoff_options'] ?? [];
+        $bracket = $this->bracketView->buildBracket($tournament);
 
-        // Liga murni tidak punya bracket.
-        if ($competitionType === 'league') {
+        if ($bracket === null) {
             return null;
         }
 
-        // league_playoff hanya punya bracket bila salah satu opsi playoff aktif.
-        $hasPromotion = in_array('promotion', $playoffOptions, true);
-        $hasRelegation = in_array('relegation', $playoffOptions, true);
-        if ($competitionType === 'league_playoff' && ! $hasPromotion && ! $hasRelegation) {
-            return null;
-        }
+        // Konteks tim untuk badge "Tim Anda" (khusus portal Official).
+        $bracket['team_id'] = $team->id;
 
-        // Tentukan mode (untuk league_playoff dengan kedua opsi → default promosi).
-        $playoffMode = null;
-        if ($competitionType === 'league_playoff') {
-            $playoffMode = $hasPromotion ? 'promotion' : 'relegation';
-        }
-
-        $built = $this->bracketView->columns($settingValue, $playoffMode);
-
-        if (empty($built['columns'])) {
-            return null;
-        }
-
-        return [
-            'tournament' => $tournament,
-            'competition_type' => $competitionType,
-            'columns' => $built['columns'],
-            'third_place_round' => $built['thirdPlaceRound'],
-            'card_tops' => $built['cardTops'],
-            'canvas_height' => $built['canvasHeight'],
-            'row_unit' => $built['rowUnit'],
-            'header_height' => $built['headerHeight'],
-            'assigned_matches' => $this->bracketView->assignedMatches($tournament, $playoffMode),
-            'scores' => $this->bracketView->scoreSummaries($tournament, $playoffMode),
-            'team_id' => $team->id,
-        ];
+        return $bracket;
     }
 }

@@ -21,8 +21,8 @@
                     <h1 class="text-base font-semibold text-white">Futsal League</h1>
                 </div>
             </a>
-            <a href="{{ route('public.statistics.index') }}" class="rounded-2xl border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:border-emerald-400 hover:bg-slate-800">
-                Statistik
+            <a href="{{ route('public.tournaments.index') }}" class="rounded-2xl border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:border-emerald-400 hover:bg-slate-800">
+                Turnamen
             </a>
         </div>
     </header>

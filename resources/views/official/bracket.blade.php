@@ -15,7 +15,7 @@
             <p class="mt-2 text-sm">Bracket akan muncul setelah panitia menyusun babak gugur turnamen Anda.</p>
         </div>
     @else
-        @foreach($brackets as $bracket)
+        @foreach($brackets as $bracketIndex => $bracket)
             @php
                 $tournament = $bracket['tournament'];
                 $columns = $bracket['columns'];
@@ -26,84 +26,148 @@
                 $assignedMatches = $bracket['assigned_matches'];
                 $scores = $bracket['scores'];
                 $myTeamId = $bracket['team_id'];
+
+                // N14 — pecah kolom jadi model dua sisi (mirror). Bila tak layak
+                // (bracket terlalu kecil/struktur ganjil), $mirror['enabled'] false
+                // → render fallback layout satu arah lama.
+                $mirror = \App\Services\MatchGenerator::splitBracketColumnsMirror($columns);
+                $cardHeight = 120;
+
+                // Posisi vertikal khusus mirror: bagan mengerucut ke PUSAT, Final
+                // tepat di tengah kanvas, dengan ruang di atasnya untuk centerpiece.
+                $mirrorTops = null;
+                $mirrorCanvasHeight = $canvasHeight;
+                if ($mirror['enabled']) {
+                    $mirrorTopPadding = 160;
+                    $mirrorTops = \App\Services\MatchGenerator::computeMirrorCardTops($mirror, $rowUnit, $cardHeight, $mirrorTopPadding);
+                    $mirrorCanvasHeight = $mirrorTops['height'] + $headerHeight;
+                }
+
+                $layoutId = 'official-bracket-' . $bracketIndex;
             @endphp
 
             <section class="mb-8">
-                <h2 class="mb-3 text-lg font-semibold text-white">{{ $tournament->name }}</h2>
+                <div class="mb-3 flex items-center justify-between gap-3">
+                    <h2 class="text-lg font-semibold text-white">{{ $tournament->name }}</h2>
+                    {{-- N14 — tombol Layar Penuh untuk bagan ini --}}
+                    <button type="button" data-fullscreen-btn="{{ $layoutId }}"
+                            class="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-violet-500 hover:bg-slate-700">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0-4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5"></path></svg>
+                        <span data-fullscreen-label>Layar Penuh</span>
+                    </button>
+                </div>
 
                 {{-- N8 — hint scroll horizontal saat bagan melebar --}}
-                <p class="mb-2 flex items-center gap-2 text-xs text-slate-500 sm:hidden">
+                <p class="mb-2 flex items-center gap-2 text-xs text-slate-500 lg:hidden">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7l-4 5 4 5m8-10l4 5-4 5"></path></svg>
                     Geser ke kiri/kanan untuk melihat seluruh bagan
                 </p>
-                <div class="bracket-scroll rounded-2xl border border-slate-800 bg-slate-900/70 p-4 overflow-x-auto">
-                    <div class="official-bracket-layout relative min-w-max" data-bracket-layout>
+                <div class="bracket-scroll rounded-2xl border border-slate-800 bg-slate-900/70 p-4 overflow-x-auto" data-bracket-scroll="{{ $layoutId }}">
+                    <div class="official-bracket-layout relative min-w-max" data-bracket-layout id="{{ $layoutId }}">
                         <svg class="absolute inset-0 w-full h-full pointer-events-none" data-bracket-svg xmlns="http://www.w3.org/2000/svg"></svg>
 
-                        <div class="relative flex gap-12 w-full items-start">
-                            @foreach($columns as $columnIndex => $column)
-                                <div class="relative flex-shrink-0 w-[200px]" style="min-height: {{ $canvasHeight }}px;">
-                                    <div class="mb-4">
-                                        <p class="text-[10px] uppercase tracking-[0.24em] text-slate-400 font-semibold">{{ $column['label'] }} ({{ $column['teams'] }} Tim)</p>
-                                    </div>
-
-                                    @foreach($column['matches'] as $matchIndex => $match)
-                                        @php
-                                            $top = ($cardTops[$columnIndex][$matchIndex] ?? 0) + $headerHeight;
-                                            $matchId = $match['id'] ?? "generated-{$match['index']}";
-                                            $assigned = $assignedMatches[$match['id']] ?? null;
-
-                                            $leftRaw = data_get($assigned, 'homeTeam.team.name') ?: data_get($assigned, 'source_home') ?: data_get($match, 'left') ?: 'Menunggu...';
-                                            $rightRaw = data_get($assigned, 'awayTeam.team.name') ?: data_get($assigned, 'source_away') ?: data_get($match, 'right') ?: 'Menunggu...';
-                                            $leftIsPlaceholder = preg_match('/(Winner|Loser|Runner[- ]?up|^[A-Z]\d|Bye)/i', (string) $leftRaw);
-                                            $rightIsPlaceholder = preg_match('/(Winner|Loser|Runner[- ]?up|^[A-Z]\d|Bye)/i', (string) $rightRaw);
-                                            $leftDisplay = isset($assigned->home_team_id) ? $leftRaw : ($leftIsPlaceholder ? 'Menunggu...' : $leftRaw);
-                                            $rightDisplay = isset($assigned->away_team_id) ? $rightRaw : ($rightIsPlaceholder ? 'Menunggu...' : $rightRaw);
-
-                                            $score = $scores[$match['id']] ?? null;
-                                            $played = $score['played'] ?? false;
-                                            $homeScoreText = ($played && isset($score['home']['score'])) ? $score['home']['score'] : '-';
-                                            $awayScoreText = ($played && isset($score['away']['score'])) ? $score['away']['score'] : '-';
-                                            $homeIsWinner = ($score['winner_side'] ?? null) === 'home';
-                                            $awayIsWinner = ($score['winner_side'] ?? null) === 'away';
-
-                                            $homeIsMine = $assigned && $assigned->home_team_id && optional($assigned->homeTeam)->team_id == $myTeamId;
-                                            $awayIsMine = $assigned && $assigned->away_team_id && optional($assigned->awayTeam)->team_id == $myTeamId;
-                                        @endphp
-
-                                        <div class="absolute left-0 right-0" style="top: {{ $top }}px;">
-                                            <div class="official-bracket-card relative z-10 rounded-2xl border border-slate-700 bg-slate-950 p-3 shadow-sm min-h-[120px] overflow-hidden"
-                                                 data-match-id="{{ $matchId }}" data-next-match-id="{{ $match['next_match_id'] ?? '' }}">
-                                                <div class="text-[9px] uppercase tracking-[0.24em] text-slate-500 font-semibold mb-2">Match {{ $matchIndex + 1 }}</div>
-                                                <div class="space-y-3">
-                                                    <div class="rounded-2xl bg-slate-900 p-3 border {{ $homeIsWinner ? 'border-emerald-500/50' : 'border-slate-700' }}">
-                                                        <div class="flex items-center justify-between gap-2">
-                                                            <p class="text-sm {{ $homeIsWinner ? 'text-emerald-300 font-semibold' : 'text-slate-200' }}">
-                                                                {{ $leftDisplay }}
-                                                                @if($homeIsMine)<span class="ml-1 inline-flex rounded-full bg-violet-500/20 px-2 py-0.5 text-[9px] font-semibold text-violet-200">Tim Anda</span>@endif
-                                                            </p>
-                                                            <span class="shrink-0 min-w-[28px] text-center text-base font-bold tabular-nums {{ $homeIsWinner ? 'text-emerald-300' : ($played ? 'text-slate-100' : 'text-slate-500') }}">{{ $homeScoreText }}</span>
-                                                        </div>
-                                                    </div>
-                                                    <div class="rounded-2xl bg-slate-900 p-3 border {{ $awayIsWinner ? 'border-emerald-500/50' : 'border-slate-700' }}">
-                                                        <div class="flex items-center justify-between gap-2">
-                                                            <p class="text-sm {{ $awayIsWinner ? 'text-emerald-300 font-semibold' : 'text-slate-200' }}">
-                                                                {{ $rightDisplay }}
-                                                                @if($awayIsMine)<span class="ml-1 inline-flex rounded-full bg-violet-500/20 px-2 py-0.5 text-[9px] font-semibold text-violet-200">Tim Anda</span>@endif
-                                                            </p>
-                                                            <span class="shrink-0 min-w-[28px] text-center text-base font-bold tabular-nums {{ $awayIsWinner ? 'text-emerald-300' : ($played ? 'text-slate-100' : 'text-slate-500') }}">{{ $awayScoreText }}</span>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                                @if($score && ($score['pen_decides'] ?? false))
-                                                    <p class="mt-2 text-[10px] text-amber-300/80">Pen: {{ $score['home']['pen'] ?? 0 }} - {{ $score['away']['pen'] ?? 0 }}</p>
-                                                @endif
-                                            </div>
+                        @if($mirror['enabled'])
+                            {{-- N14 — layout mirror dua sisi: kiri → FINAL (tengah) ← kanan.
+                                 Posisi vertikal mengerucut ke pusat ($mirrorTops). --}}
+                            <div class="relative flex gap-12 w-full items-start justify-center">
+                                {{-- Sisi kiri: ronde awal → mendekati final --}}
+                                @foreach($mirror['left'] as $leftColIdx => $column)
+                                    <div class="relative flex-shrink-0 w-[200px]" style="min-height: {{ $mirrorCanvasHeight }}px;">
+                                        <div class="mb-4">
+                                            <p class="text-[10px] uppercase tracking-[0.24em] text-slate-400 font-semibold">{{ $column['label'] }} ({{ $column['teams'] }} Tim)</p>
                                         </div>
-                                    @endforeach
+                                        @foreach($column['matches'] as $localMatchIdx => $match)
+                                            @include('official.partials.bracket-card', [
+                                                'match' => $match,
+                                                'matchIndex' => $match['match_index'],
+                                                'top' => ($mirrorTops['left'][$leftColIdx][$localMatchIdx] ?? 0) + $headerHeight,
+                                                'side' => 'left',
+                                                'assignedMatches' => $assignedMatches,
+                                                'scores' => $scores,
+                                                'myTeamId' => $myTeamId,
+                                            ])
+                                        @endforeach
+                                    </div>
+                                @endforeach
+
+                                {{-- Zona tengah: FINAL + piala + label juara, dipusatkan vertikal --}}
+                                @php $finalMatch = $mirror['final']['matches'][0] ?? null; @endphp
+                                <div class="relative flex-shrink-0 w-[200px] mx-6" style="min-height: {{ $mirrorCanvasHeight }}px;">
+                                    @if($finalMatch)
+                                        @php
+                                            $finalScore = $scores[$finalMatch['id']] ?? null;
+                                            $finalChampion = null;
+                                            if (($finalScore['winner_side'] ?? null) === 'home') {
+                                                $finalChampion = data_get($assignedMatches[$finalMatch['id']] ?? null, 'homeTeam.team.name');
+                                            } elseif (($finalScore['winner_side'] ?? null) === 'away') {
+                                                $finalChampion = data_get($assignedMatches[$finalMatch['id']] ?? null, 'awayTeam.team.name');
+                                            }
+                                            $finalTopPx = ($mirrorTops['final'] ?? 0) + $headerHeight;
+                                        @endphp
+                                        {{-- Zona di ATAS kartu Final: piala besar → JUARA → label FINAL. --}}
+                                        <div class="absolute left-0 right-0 flex flex-col items-center justify-end text-center" style="top: 0; height: {{ max($finalTopPx - 8, 0) }}px;">
+                                            <div class="text-6xl leading-none drop-shadow-[0_0_22px_rgba(245,197,24,0.45)] select-none" aria-hidden="true">🏆</div>
+                                            @if($finalChampion)
+                                                <span class="mt-3 text-[9px] uppercase tracking-[0.3em] text-amber-300 font-semibold">Juara</span>
+                                                <span class="mt-1 rounded-full bg-amber-500/15 border border-amber-500/40 px-3 py-1 text-sm font-bold text-amber-200">{{ $finalChampion }}</span>
+                                            @endif
+                                            <p class="mt-3 mb-2 text-[11px] uppercase tracking-[0.3em] text-amber-300 font-bold">{{ $mirror['final']['label'] }}</p>
+                                        </div>
+                                        @include('official.partials.bracket-card', [
+                                            'match' => $finalMatch,
+                                            'matchIndex' => $finalMatch['match_index'],
+                                            'top' => $finalTopPx,
+                                            'side' => 'final',
+                                            'assignedMatches' => $assignedMatches,
+                                            'scores' => $scores,
+                                            'myTeamId' => $myTeamId,
+                                        ])
+                                    @endif
                                 </div>
-                            @endforeach
-                        </div>
+
+                                {{-- Sisi kanan: mendekati final → ronde awal (cermin) --}}
+                                @foreach($mirror['right'] as $rightColIdx => $column)
+                                    <div class="relative flex-shrink-0 w-[200px]" style="min-height: {{ $mirrorCanvasHeight }}px;">
+                                        <div class="mb-4 text-right">
+                                            <p class="text-[10px] uppercase tracking-[0.24em] text-slate-400 font-semibold">{{ $column['label'] }} ({{ $column['teams'] }} Tim)</p>
+                                        </div>
+                                        @foreach($column['matches'] as $localMatchIdx => $match)
+                                            @include('official.partials.bracket-card', [
+                                                'match' => $match,
+                                                'matchIndex' => $match['match_index'],
+                                                'top' => ($mirrorTops['right'][$rightColIdx][$localMatchIdx] ?? 0) + $headerHeight,
+                                                'side' => 'right',
+                                                'assignedMatches' => $assignedMatches,
+                                                'scores' => $scores,
+                                                'myTeamId' => $myTeamId,
+                                            ])
+                                        @endforeach
+                                    </div>
+                                @endforeach
+                            </div>
+                        @else
+                            {{-- Fallback: layout satu arah (kiri → kanan) seperti semula --}}
+                            <div class="relative flex gap-12 w-full items-start">
+                                @foreach($columns as $columnIndex => $column)
+                                    <div class="relative flex-shrink-0 w-[200px]" style="min-height: {{ $canvasHeight }}px;">
+                                        <div class="mb-4">
+                                            <p class="text-[10px] uppercase tracking-[0.24em] text-slate-400 font-semibold">{{ $column['label'] }} ({{ $column['teams'] }} Tim)</p>
+                                        </div>
+                                        @foreach($column['matches'] as $matchIndex => $match)
+                                            @include('official.partials.bracket-card', [
+                                                'match' => $match,
+                                                'matchIndex' => $matchIndex,
+                                                'top' => ($cardTops[$columnIndex][$matchIndex] ?? 0) + $headerHeight,
+                                                'side' => '',
+                                                'assignedMatches' => $assignedMatches,
+                                                'scores' => $scores,
+                                                'myTeamId' => $myTeamId,
+                                            ])
+                                        @endforeach
+                                    </div>
+                                @endforeach
+                            </div>
+                        @endif
                     </div>
                 </div>
             </section>
@@ -119,6 +183,24 @@
     .bracket-scroll::-webkit-scrollbar-track { background: #1e293b; border-radius: 9999px; }
     .bracket-scroll::-webkit-scrollbar-thumb { background: #8b5cf6; border-radius: 9999px; }
     .bracket-scroll::-webkit-scrollbar-thumb:hover { background: #a78bfa; }
+
+    /* Mode layar penuh untuk bagan (Fullscreen API). */
+    .bracket-fullscreen {
+        width: 100vw;
+        height: 100vh;
+        max-width: none;
+        overflow: auto;
+        padding: 2rem;
+        background: #0f172a;
+    }
+    [data-bracket-scroll]:fullscreen,
+    [data-bracket-scroll]:-webkit-full-screen {
+        width: 100vw;
+        height: 100vh;
+        overflow: auto;
+        padding: 2rem;
+        background: #0f172a;
+    }
 </style>
 @endpush
 
@@ -154,9 +236,12 @@
             const target = map.get(nextId);
             if (!target) return;
 
-            const s = anchor(source, 'right');
-            const t = anchor(target, 'left');
-            const midX = s.x + Math.max((t.x - s.x) / 2, 40);
+            // N14 — pada sisi kanan (mirror), aliran mengarah ke KIRI menuju Final
+            // di tengah: ambil tepi kiri sumber → tepi kanan target.
+            const isRightSide = source.dataset.bracketSide === 'right';
+            const s = anchor(source, isRightSide ? 'left' : 'right');
+            const t = anchor(target, isRightSide ? 'right' : 'left');
+            const midX = s.x + (t.x - s.x) / 2;
 
             const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
             path.setAttribute('d', `M ${s.x} ${s.y} H ${midX} V ${t.y} H ${t.x}`);
@@ -173,9 +258,45 @@
         document.querySelectorAll('[data-bracket-layout]').forEach(drawConnectorsFor);
     }
 
+    function setupFullscreen() {
+        document.querySelectorAll('[data-fullscreen-btn]').forEach(btn => {
+            const targetId = btn.dataset.fullscreenBtn;
+            const container = document.querySelector(`[data-bracket-scroll="${targetId}"]`);
+            const label = btn.querySelector('[data-fullscreen-label]');
+            if (!container) return;
+
+            btn.addEventListener('click', () => {
+                const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+                if (!fsEl) {
+                    (container.requestFullscreen || container.webkitRequestFullscreen)?.call(container);
+                } else {
+                    (document.exitFullscreen || document.webkitExitFullscreen)?.call(document);
+                }
+            });
+        });
+
+        const onChange = () => {
+            document.querySelectorAll('[data-bracket-scroll]').forEach(container => {
+                const active = document.fullscreenElement === container
+                    || document.webkitFullscreenElement === container;
+                container.classList.toggle('bracket-fullscreen', active);
+                const btn = document.querySelector(`[data-fullscreen-btn="${container.dataset.bracketScroll}"]`);
+                const label = btn?.querySelector('[data-fullscreen-label]');
+                if (label) label.textContent = active ? 'Keluar Layar Penuh' : 'Layar Penuh';
+            });
+            // Redraw konektor setelah layout fullscreen stabil.
+            setTimeout(drawAll, 120);
+        };
+        document.addEventListener('fullscreenchange', onChange);
+        document.addEventListener('webkitfullscreenchange', onChange);
+    }
+
     window.addEventListener('load', drawAll);
     window.addEventListener('resize', drawAll);
-    document.addEventListener('DOMContentLoaded', () => setTimeout(drawAll, 50));
+    document.addEventListener('DOMContentLoaded', () => {
+        setupFullscreen();
+        setTimeout(drawAll, 50);
+    });
 })();
 </script>
 @endpush
