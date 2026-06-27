@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Str;
 
 class Team extends Model
 {
@@ -17,6 +18,23 @@ class Team extends Model
         'verification_status',
         'created_by',
     ];
+
+    /**
+     * Generate token manager unik berbasis nama tim (mis. "GARUDA-1234").
+     * Sumber tunggal pembuatan token agar dipakai konsisten di TeamController
+     * (store/reset) maupun saat menambah peserta lewat Manajemen Peserta (N3).
+     */
+    public static function generateUniqueManagerToken(?string $name = null): string
+    {
+        $base = $name ?: 'TEAM';
+        $prefix = strtoupper(Str::slug($base, '')) ?: 'TEAM';
+
+        do {
+            $token = $prefix . '-' . random_int(1000, 9999);
+        } while (static::where('manager_token', $token)->exists());
+
+        return $token;
+    }
 
     public function creator()
     {

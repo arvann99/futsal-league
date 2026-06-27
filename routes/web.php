@@ -65,6 +65,9 @@ Route::middleware(['auth', 'owns'])->group(function () {
     Route::get('/tournaments/{tournament}/settings', [TournamentController::class, 'settings'])->name('tournaments.settings');
     Route::get('/tournaments/{tournament}/manage-schedule', [TournamentController::class, 'manageSchedule'])->name('tournaments.manageSchedule');
     Route::patch('/tournaments/{tournament}/matches/{match}', [TournamentController::class, 'updateMatch'])->name('tournaments.matches.update');
+    // N5 — Edit khusus Skor; N6 — Jadwal khusus tanggal/waktu
+    Route::patch('/tournaments/{tournament}/matches/{match}/score', [TournamentController::class, 'updateScore'])->name('tournaments.matches.score');
+    Route::patch('/tournaments/{tournament}/matches/{match}/schedule', [TournamentController::class, 'updateSchedule'])->name('tournaments.matches.schedule');
     Route::post('/tournaments/{tournament}/matches/{match}/live-logger', [TournamentController::class, 'openLiveMatchLogger'])->name('tournaments.matches.liveLogger');
     Route::post('/tournaments/{tournament}/matches/{match}/events', [TournamentController::class, 'storeMatchEvent'])->name('tournaments.matches.events.store');
     Route::patch('/tournaments/{tournament}/matches/{match}/end', [TournamentController::class, 'endMatch'])->name('tournaments.matches.end');
@@ -84,6 +87,9 @@ Route::middleware(['auth', 'owns'])->group(function () {
     
     // Tournament Standings
     Route::get('/tournaments/{tournament}/standings', [TournamentController::class, 'standings'])->name('tournaments.standings');
+
+    // N12 — Manajemen Pemain / Statistik turnamen (sisi Admin)
+    Route::get('/tournaments/{tournament}/statistics', [TournamentController::class, 'statistics'])->name('tournaments.statistics');
 
     // Tournament Document Verification
     Route::get('/tournaments/{tournament}/verification', [TournamentController::class, 'verification'])->name('tournaments.verification');
@@ -127,6 +133,19 @@ Route::get('/public/login', function () {
     ]);
 })->name('public.login');
 
+// Portal Publik per-turnamen (view-only, tanpa login) — SATU pintu: pilih
+// turnamen lalu menu di dalam (nav bawah) mirip Manager. Statistik & Bagan
+// adalah TAB di dalam portal, bukan halaman daftar terpisah.
+// N13 — statistik turnamen; bagan/bracket dipakai TournamentStatisticsService &
+// BracketViewService yang sama dengan portal lain.
+Route::get('/public/tournaments', [App\Http\Controllers\PublicTournamentController::class, 'index'])->name('public.tournaments.index');
+Route::get('/public/tournaments/{tournament}', [App\Http\Controllers\PublicTournamentController::class, 'overview'])->name('public.tournaments.overview');
+Route::get('/public/tournaments/{tournament}/jadwal', [App\Http\Controllers\PublicTournamentController::class, 'schedule'])->name('public.tournaments.schedule');
+Route::get('/public/tournaments/{tournament}/klasemen', [App\Http\Controllers\PublicTournamentController::class, 'standings'])->name('public.tournaments.standings');
+Route::get('/public/tournaments/{tournament}/bracket', [App\Http\Controllers\PublicBracketController::class, 'show'])->name('public.bracket.show');
+Route::get('/public/tournaments/{tournament}/statistik', [App\Http\Controllers\PublicTournamentController::class, 'statistics'])->name('public.tournaments.statistics');
+Route::get('/public/tournaments/{tournament}/roster', [App\Http\Controllers\PublicTournamentController::class, 'roster'])->name('public.tournaments.roster');
+
 Route::get('/official/login', [App\Http\Controllers\OfficialAuthController::class, 'showLogin'])->name('official.login');
 Route::post('/official/login', [App\Http\Controllers\OfficialAuthController::class, 'login'])->name('official.login.submit');
 Route::post('/official/logout', [App\Http\Controllers\OfficialAuthController::class, 'logout'])->name('official.logout');
@@ -150,4 +169,8 @@ Route::middleware([App\Http\Middleware\OfficialAuth::class])->group(function () 
     Route::delete('/official/officials/{official}', [App\Http\Controllers\OfficialTeamOfficialController::class, 'destroy'])->name('official.officials.destroy');
     Route::get('/official/schedule', [App\Http\Controllers\OfficialAuthController::class, 'schedule'])->name('official.schedule');
     Route::get('/official/standings', [App\Http\Controllers\OfficialStandingsController::class, 'index'])->name('official.standings');
+    // N4 — Official/Manager dapat melihat bagan/bracket (read-only)
+    Route::get('/official/bracket', [App\Http\Controllers\OfficialBracketController::class, 'index'])->name('official.bracket');
+    // N13 — Statistik view-only untuk Manager
+    Route::get('/official/statistics', [App\Http\Controllers\OfficialAuthController::class, 'statistics'])->name('official.statistics');
 });

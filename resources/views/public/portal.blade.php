@@ -41,13 +41,13 @@
                     <span class="mt-6 inline-flex rounded-full bg-violet-500/10 px-4 py-2 text-sm font-semibold text-violet-200">Masuk</span>
                 </a>
 
-                <a href="{{ route('public.login') }}" class="flex flex-col items-start justify-between rounded-3xl border border-slate-700/80 bg-slate-950/90 p-6 transition hover:-translate-y-1 hover:border-emerald-400/30 hover:bg-slate-900">
+                <a href="{{ route('public.tournaments.index') }}" class="flex flex-col items-start justify-between rounded-3xl border border-slate-700/80 bg-slate-950/90 p-6 transition hover:-translate-y-1 hover:border-emerald-400/30 hover:bg-slate-900">
                     <div>
                         <p class="text-sm font-semibold uppercase tracking-[0.24em] text-emerald-300">Publik</p>
-                        <h2 class="mt-3 text-xl font-semibold text-white">Masuk Umum</h2>
-                        <p class="mt-2 text-sm text-slate-400">Lihat jadwal, klasemen, dan informasi pertandingan.</p>
+                        <h2 class="mt-3 text-xl font-semibold text-white">Portal Turnamen</h2>
+                        <p class="mt-2 text-sm text-slate-400">Jadwal, klasemen, bagan, statistik & roster tanpa login.</p>
                     </div>
-                    <span class="mt-6 inline-flex rounded-full bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-200">Akses</span>
+                    <span class="mt-6 inline-flex rounded-full bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-200">Lihat</span>
                 </a>
             </div>
 

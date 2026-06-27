@@ -39,6 +39,29 @@
                     </div>
                 </div>
 
+                {{-- N2 — Sistem Undian terintegrasi langsung di halaman Bagan Klasemen --}}
+                @if(($setting->group_count ?? 0) > 0)
+                    <div class="mb-6 rounded-2xl border border-slate-800 bg-slate-900/60">
+                        <button type="button"
+                                onclick="const p=this.nextElementSibling; p.classList.toggle('hidden'); this.querySelector('[data-chevron]').classList.toggle('rotate-180');"
+                                class="w-full flex items-center justify-between px-5 py-4 text-left">
+                            <span class="flex items-center gap-3">
+                                <span class="text-xl">🎲</span>
+                                <span>
+                                    <span class="block text-sm font-semibold text-white">Sistem Undian Grup</span>
+                                    <span class="block text-xs text-slate-400">Acak penempatan tim ke grup, hasil langsung tersimpan & klasemen diperbarui.</span>
+                                </span>
+                            </span>
+                            <svg data-chevron class="w-5 h-5 text-slate-400 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                            </svg>
+                        </button>
+                        <div class="hidden px-5 pb-5">
+                            @include('admin.tournaments.settings.partials.group-draw-panel', ['teams' => $drawTeams, 'groupLabels' => $drawGroupLabels])
+                        </div>
+                    </div>
+                @endif
+
                 <!-- Groups Grid -->
                 @if(($setting->group_count ?? 0) > 0)
                     @php

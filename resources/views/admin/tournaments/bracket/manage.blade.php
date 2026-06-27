@@ -183,125 +183,141 @@
 
                         $qualifiedTeamKeys = array_keys($teamsToUse);
                         $qualifiedTeamOptions = $qualifiedTeamOptions ?? [];
+
+                        // N14 — pecah kolom jadi model dua sisi (mirror). Bila tak
+                        // layak (bracket terlalu kecil/struktur ganjil), $mirror['enabled']
+                        // false → render fallback layout satu arah lama.
+                        $mirror = \App\Services\MatchGenerator::splitBracketColumnsMirror($bracketColumns);
+
+                        // Posisi vertikal khusus mirror: bagan mengerucut ke PUSAT
+                        // (tengah vertikal), Final tepat di tengah kanvas.
+                        $mirrorTops = null;
+                        $mirrorCanvasHeight = $bracketCanvasHeight;
+                        if ($mirror['enabled']) {
+                            // Sisakan ruang di atas Final untuk centerpiece (piala + juara + FINAL).
+                            $mirrorTopPadding = 160;
+                            $mirrorTops = \App\Services\MatchGenerator::computeMirrorCardTops($mirror, $rowUnit, $cardHeight, $mirrorTopPadding);
+                            $mirrorCanvasHeight = $mirrorTops['height'] + $columnHeaderHeight;
+                        }
                     @endphp
 
+                    {{-- N8 — hint scroll horizontal + tombol Fullscreen --}}
+                    <div class="mb-2 flex items-center justify-between gap-3">
+                        <p class="flex items-center gap-2 text-xs text-slate-500 lg:invisible">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7l-4 5 4 5m8-10l4 5-4 5"></path></svg>
+                            Geser ke kiri/kanan untuk melihat seluruh bagan
+                        </p>
+                        <button type="button" id="bracketFullscreenBtn"
+                                class="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-violet-500 hover:bg-slate-700">
+                            <svg id="bracketFullscreenIcon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0-4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5"></path></svg>
+                            <span id="bracketFullscreenLabel">Layar Penuh</span>
+                        </button>
+                    </div>
                     <div class="grid gap-4 mb-6 lg:grid-cols-[1fr_260px]">
-                        <div class="bg-slate-900 rounded-xl border border-slate-800 p-4 overflow-x-auto">
+                        <div id="bracketScrollContainer" class="bracket-scroll bg-slate-900 rounded-xl border border-slate-800 p-4 overflow-x-auto">
                             <div id="bracketConnectorLayout" class="relative min-w-max">
                                 <svg id="bracketConnectorSvg" class="absolute inset-0 w-full h-full pointer-events-none" xmlns="http://www.w3.org/2000/svg"></svg>
 
-                                <div class="relative flex gap-12 w-full items-start">
-                                    @foreach($bracketColumns as $columnIndex => $column)
-                                        <div class="relative flex-shrink-0 w-[200px]" data-final-column="{{ $columnIndex === count($bracketColumns) - 1 ? '1' : '0' }}" style="min-height: {{ $bracketCanvasHeight }}px;">
-                                            <div class="mb-4">
-                                                <p class="text-[10px] uppercase tracking-[0.24em] text-slate-400 font-semibold">{{ $column['label'] }} ({{ $column['teams'] }} Tim)</p>
-                                            </div>
-
-                                            @foreach($column['matches'] as $matchIndex => $match)
-                                                @php
-                                                    $top = ($cardTops[$columnIndex][$matchIndex] ?? 0) + $columnHeaderHeight;
-                                                    $matchId = $match['id'] ?? "generated-{$match['index']}";
-                                                    $leftSlot = $match['left'];
-                                                    $rightSlot = $match['right'];
-                                                    $leftEditable = isset($teamsToUse[$leftSlot]);
-                                                    $rightEditable = isset($teamsToUse[$rightSlot]);
-
-                                                    // Determine assigned match (if persisted)
-                                                    $assigned = $assignedMatches[$match['id']] ?? null;
-                                                    $leftRaw = data_get($assigned, 'homeTeam.team.name') ?: data_get($assigned, 'source_home') ?: data_get($match, 'left') ?: 'Winner-up M1';
-                                                    $rightRaw = data_get($assigned, 'awayTeam.team.name') ?: data_get($assigned, 'source_away') ?: data_get($match, 'right') ?: 'Winner-up M2';
-                                                    $leftIsPlaceholder = preg_match('/(Winner|Loser|Runner[- ]?up|^[A-Z]\\d|Bye)/i', (string)$leftRaw);
-                                                    $rightIsPlaceholder = preg_match('/(Winner|Loser|Runner[- ]?up|^[A-Z]\\d|Bye)/i', (string)$rightRaw);
-                                                    $leftDisplay = isset($assigned->home_team_id) ? $leftRaw : ($leftIsPlaceholder ? 'Menunggu...' : $leftRaw);
-                                                    $rightDisplay = isset($assigned->away_team_id) ? $rightRaw : ($rightIsPlaceholder ? 'Menunggu...' : $rightRaw);
-
-                                                    // Ringkasan skor kartu (single / 2-leg / penalti). '-' bila belum main.
-                                                    $score = $bracketScores[$match['id']] ?? null;
-                                                    $played = $score['played'] ?? false;
-                                                    $homeScore = $played ? ($score['home']['score'] ?? null) : null;
-                                                    $awayScore = $played ? ($score['away']['score'] ?? null) : null;
-                                                    $homeScoreText = $homeScore === null ? '-' : $homeScore;
-                                                    $awayScoreText = $awayScore === null ? '-' : $awayScore;
-                                                    $homeIsWinner = ($score['winner_side'] ?? null) === 'home';
-                                                    $awayIsWinner = ($score['winner_side'] ?? null) === 'away';
-                                                @endphp
-
-                                                <div class="absolute left-0 right-0" style="top: {{ $top }}px;">
-                                                    <div id="bracket-card-{{ $matchId }}" class="relative z-10 rounded-2xl border border-slate-700 bg-slate-950 p-3 shadow-sm min-h-[120px] overflow-hidden bracket-card" data-match-id="{{ $matchId }}" data-next-match-id="{{ $match['next_match_id'] ?? '' }}" data-match-round="{{ $column['label'] }}">
-                                                        <div class="text-[9px] uppercase tracking-[0.24em] text-slate-500 font-semibold mb-2">Match {{ $matchIndex + 1 }}</div>
-                                                        <div class="space-y-3">
-                                                                <div class="rounded-2xl bg-slate-900 p-3 border {{ $homeIsWinner ? 'border-emerald-500/50' : 'border-slate-700' }}">
-                                                                <div class="flex items-center justify-between mb-2 text-[8px] uppercase tracking-[0.24em] text-slate-500 font-semibold">
-                                                                    <span>Tim 1</span>
-                                                                    <span class="text-slate-400">{{ $leftDisplay }}</span>
-                                                                </div>
-                                                                        <div class="flex items-center justify-between gap-2">
-                                                                        @if($leftEditable)
-                                                                            <div class="auto-select">
-                                                                                <p class="text-sm {{ $homeIsWinner ? 'text-emerald-300 font-semibold' : 'text-slate-200' }}">{{ $leftDisplay }}</p>
-                                                                                <input type="hidden" name="matches[{{ $match['index'] }}][left]" value="{{ $leftSlot }}">
-                                                                                <input type="hidden" name="matches[{{ $match['index'] }}][left_id]" value="{{ optional($assigned)->home_team_id ?? '' }}">
-                                                                            </div>
-
-                                                                            <div class="manual-select hidden">
-                                                                                @php
-                                                                                    $teamSelectOptions = ! empty($qualifiedTeamOptions) ? $qualifiedTeamOptions : $tournamentTeams->mapWithKeys(fn($tt) => [$tt->id => ['name' => $tt->team?->name ?? 'Team ' . $tt->id]])->all();
-                                                                                @endphp
-                                                                                <select name="matches[{{ $match['index'] }}][left_id]" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-violet-500">
-                                                                                    @foreach($teamSelectOptions as $teamId => $option)
-                                                                                        <option value="{{ $teamId }}" {{ optional($assigned)->home_team_id == $teamId ? 'selected' : '' }}>{{ data_get($option, 'name') }}</option>
-                                                                                    @endforeach
-                                                                                </select>
-                                                                            </div>
-                                                                        @else
-                                                                            <p class="text-sm text-slate-200">{{ $leftDisplay }}</p>
-                                                                            <input type="hidden" name="matches[{{ $match['index'] }}][left]" value="{{ $leftSlot }}">
-                                                                            <input type="hidden" name="matches[{{ $match['index'] }}][left_id]" value="">
-                                                                        @endif
-                                                                            <span class="shrink-0 min-w-[28px] text-center text-base font-bold tabular-nums {{ $homeIsWinner ? 'text-emerald-300' : ($played ? 'text-slate-100' : 'text-slate-500') }}">{{ $homeScoreText }}</span>
-                                                                        </div>
-                                                            </div>
-
-                                                            <div class="rounded-2xl bg-slate-900 p-3 border {{ $awayIsWinner ? 'border-emerald-500/50' : 'border-slate-700' }}">
-                                                                <div class="flex items-center justify-between mb-2 text-[8px] uppercase tracking-[0.24em] text-slate-500 font-semibold">
-                                                                    <span>Tim 2</span>
-                                                                    <span class="text-slate-400">{{ $rightDisplay }}</span>
-                                                                </div>
-                                                                <div class="flex items-center justify-between gap-2">
-                                                                @if($rightEditable)
-                                                                    <div class="auto-select">
-                                                                        <p class="text-sm {{ $awayIsWinner ? 'text-emerald-300 font-semibold' : 'text-slate-200' }}">{{ $rightDisplay }}</p>
-                                                                        <input type="hidden" name="matches[{{ $match['index'] }}][right]" value="{{ $rightSlot }}">
-                                                                        <input type="hidden" name="matches[{{ $match['index'] }}][right_id]" value="{{ optional($assigned)->away_team_id ?? '' }}">
-                                                                    </div>
-
-                                                                    <div class="manual-select hidden">
-                                                                        @php
-                                                                            $teamSelectOptions = ! empty($qualifiedTeamOptions) ? $qualifiedTeamOptions : $tournamentTeams->mapWithKeys(fn($tt) => [$tt->id => ['name' => $tt->team?->name ?? 'Team ' . $tt->id]])->all();
-                                                                        @endphp
-                                                                        <select name="matches[{{ $match['index'] }}][right_id]" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-violet-500">
-                                                                            @foreach($teamSelectOptions as $teamId => $option)
-                                                                                <option value="{{ $teamId }}" {{ optional($assigned)->away_team_id == $teamId ? 'selected' : '' }}>{{ data_get($option, 'name') }}</option>
-                                                                            @endforeach
-                                                                        </select>
-                                                                    </div>
-                                                                @else
-                                                                    <p class="text-sm text-slate-200">{{ $rightDisplay }}</p>
-                                                                    <input type="hidden" name="matches[{{ $match['index'] }}][right]" value="{{ $rightSlot }}">
-                                                                    <input type="hidden" name="matches[{{ $match['index'] }}][right_id]" value="">
-                                                                @endif
-                                                                    <span class="shrink-0 min-w-[28px] text-center text-base font-bold tabular-nums {{ $awayIsWinner ? 'text-emerald-300' : ($played ? 'text-slate-100' : 'text-slate-500') }}">{{ $awayScoreText }}</span>
-                                                                </div>
-                                                            </div>
-                                                        </div>
-
-                                                        @include('admin.tournaments.bracket.partials.score-detail', ['score' => $score, 'played' => $played])
-                                                    </div>
+                                @if($mirror['enabled'])
+                                    {{-- N14 — layout mirror dua sisi: kiri → FINAL (tengah) ← kanan.
+                                         Posisi vertikal mengerucut ke pusat ($mirrorTops). --}}
+                                    <div class="relative flex gap-12 w-full items-start justify-center">
+                                        {{-- Sisi kiri: ronde awal → mendekati final --}}
+                                        @foreach($mirror['left'] as $leftColIdx => $column)
+                                            <div class="relative flex-shrink-0 w-[200px]" style="min-height: {{ $mirrorCanvasHeight }}px;">
+                                                <div class="mb-4">
+                                                    <p class="text-[10px] uppercase tracking-[0.24em] text-slate-400 font-semibold">{{ $column['label'] }} ({{ $column['teams'] }} Tim)</p>
                                                 </div>
-                                            @endforeach
+                                                @foreach($column['matches'] as $localMatchIdx => $match)
+                                                    @include('admin.tournaments.bracket.partials.match-card', [
+                                                        'match' => $match,
+                                                        'column' => $column,
+                                                        'matchIndex' => $match['match_index'],
+                                                        'top' => ($mirrorTops['left'][$leftColIdx][$localMatchIdx] ?? 0) + $columnHeaderHeight,
+                                                        'side' => 'left',
+                                                    ])
+                                                @endforeach
+                                            </div>
+                                        @endforeach
+
+                                        {{-- Zona tengah: FINAL + label juara, dipusatkan vertikal --}}
+                                        @php $finalMatch = $mirror['final']['matches'][0] ?? null; @endphp
+                                        <div class="relative flex-shrink-0 w-[200px] mx-6" data-final-column="1" style="min-height: {{ $mirrorCanvasHeight }}px;">
+                                            @if($finalMatch)
+                                                @php
+                                                    $finalScore = $bracketScores[$finalMatch['id']] ?? null;
+                                                    $finalChampion = null;
+                                                    if (($finalScore['winner_side'] ?? null) === 'home') {
+                                                        $finalChampion = data_get($assignedMatches[$finalMatch['id']] ?? null, 'homeTeam.team.name');
+                                                    } elseif (($finalScore['winner_side'] ?? null) === 'away') {
+                                                        $finalChampion = data_get($assignedMatches[$finalMatch['id']] ?? null, 'awayTeam.team.name');
+                                                    }
+                                                    $finalTopPx = ($mirrorTops['final'] ?? 0) + $columnHeaderHeight;
+                                                @endphp
+                                                {{-- Zona di ATAS kartu Final: piala besar → JUARA → label FINAL.
+                                                     Di-anchor agar bagian bawahnya berhenti tepat di atas kartu. --}}
+                                                <div class="absolute left-0 right-0 flex flex-col items-center justify-end text-center" style="top: 0; height: {{ max($finalTopPx - 8, 0) }}px;">
+                                                    {{-- Piala besar di tengah --}}
+                                                    <div class="text-6xl leading-none drop-shadow-[0_0_22px_rgba(245,197,24,0.45)] select-none" aria-hidden="true">🏆</div>
+
+                                                    {{-- Juara di ATAS (bila final sudah ada pemenang) --}}
+                                                    @if($finalChampion)
+                                                        <span class="mt-3 text-[9px] uppercase tracking-[0.3em] text-amber-300 font-semibold">Juara</span>
+                                                        <span class="mt-1 rounded-full bg-amber-500/15 border border-amber-500/40 px-3 py-1 text-sm font-bold text-amber-200">{{ $finalChampion }}</span>
+                                                    @endif
+
+                                                    {{-- Label FINAL tepat di atas kartu --}}
+                                                    <p class="mt-3 mb-2 text-[11px] uppercase tracking-[0.3em] text-amber-300 font-bold">{{ $mirror['final']['label'] }}</p>
+                                                </div>
+                                                @include('admin.tournaments.bracket.partials.match-card', [
+                                                    'match' => $finalMatch,
+                                                    'column' => $mirror['final'],
+                                                    'matchIndex' => $finalMatch['match_index'],
+                                                    'top' => $finalTopPx,
+                                                    'side' => 'final',
+                                                ])
+                                            @endif
                                         </div>
-                                    @endforeach
-                                </div>
+
+                                        {{-- Sisi kanan: mendekati final → ronde awal (cermin) --}}
+                                        @foreach($mirror['right'] as $rightColIdx => $column)
+                                            <div class="relative flex-shrink-0 w-[200px]" style="min-height: {{ $mirrorCanvasHeight }}px;">
+                                                <div class="mb-4 text-right">
+                                                    <p class="text-[10px] uppercase tracking-[0.24em] text-slate-400 font-semibold">{{ $column['label'] }} ({{ $column['teams'] }} Tim)</p>
+                                                </div>
+                                                @foreach($column['matches'] as $localMatchIdx => $match)
+                                                    @include('admin.tournaments.bracket.partials.match-card', [
+                                                        'match' => $match,
+                                                        'column' => $column,
+                                                        'matchIndex' => $match['match_index'],
+                                                        'top' => ($mirrorTops['right'][$rightColIdx][$localMatchIdx] ?? 0) + $columnHeaderHeight,
+                                                        'side' => 'right',
+                                                    ])
+                                                @endforeach
+                                            </div>
+                                        @endforeach
+                                    </div>
+                                @else
+                                    {{-- Fallback: layout satu arah (kiri → kanan) seperti semula --}}
+                                    <div class="relative flex gap-12 w-full items-start">
+                                        @foreach($bracketColumns as $columnIndex => $column)
+                                            <div class="relative flex-shrink-0 w-[200px]" data-final-column="{{ $columnIndex === count($bracketColumns) - 1 ? '1' : '0' }}" style="min-height: {{ $bracketCanvasHeight }}px;">
+                                                <div class="mb-4">
+                                                    <p class="text-[10px] uppercase tracking-[0.24em] text-slate-400 font-semibold">{{ $column['label'] }} ({{ $column['teams'] }} Tim)</p>
+                                                </div>
+                                                @foreach($column['matches'] as $matchIndex => $match)
+                                                    @include('admin.tournaments.bracket.partials.match-card', [
+                                                        'match' => $match,
+                                                        'column' => $column,
+                                                        'matchIndex' => $matchIndex,
+                                                        'top' => ($cardTops[$columnIndex][$matchIndex] ?? 0) + $columnHeaderHeight,
+                                                        'side' => '',
+                                                    ])
+                                                @endforeach
+                                            </div>
+                                        @endforeach
+                                    </div>
+                                @endif
 
                                 @if(! empty($thirdPlaceRound))
                                     <div id="thirdPlacePanel" class="absolute transition-all duration-200" style="top: 0; left: 0;">
@@ -426,9 +442,12 @@
                 const targetCard = cardMap.get(nextMatchId);
                 if (!targetCard) return;
 
-                const sourcePoint = getAnchor(sourceCard, 'right');
-                const targetPoint = getAnchor(targetCard, 'left');
-                const midX = sourcePoint.x + Math.max((targetPoint.x - sourcePoint.x) / 2, 40);
+                // N14 — pada sisi kanan (mirror), aliran mengarah ke KIRI menuju
+                // Final di tengah: ambil tepi kiri sumber → tepi kanan target.
+                const isRightSide = sourceCard.dataset.bracketSide === 'right';
+                const sourcePoint = getAnchor(sourceCard, isRightSide ? 'left' : 'right');
+                const targetPoint = getAnchor(targetCard, isRightSide ? 'right' : 'left');
+                const midX = sourcePoint.x + (targetPoint.x - sourcePoint.x) / 2;
 
                 const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
                 path.setAttribute('d', `M ${sourcePoint.x} ${sourcePoint.y} H ${midX} V ${targetPoint.y} H ${targetPoint.x}`);
@@ -473,7 +492,44 @@
                 updateThirdPlacePanel();
             });
             setupBracketSlotSwapping();
+            setupBracketFullscreen();
         });
+
+        function setupBracketFullscreen() {
+            const container = document.getElementById('bracketScrollContainer');
+            const btn = document.getElementById('bracketFullscreenBtn');
+            const label = document.getElementById('bracketFullscreenLabel');
+            if (!container || !btn) return;
+
+            const redraw = () => {
+                // Tunggu layout fullscreen stabil sebelum menggambar ulang konektor.
+                setTimeout(() => {
+                    drawBracketConnections();
+                    updateThirdPlacePanel();
+                }, 120);
+            };
+
+            btn.addEventListener('click', () => {
+                const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+                if (!fsEl) {
+                    (container.requestFullscreen || container.webkitRequestFullscreen)?.call(container);
+                } else {
+                    (document.exitFullscreen || document.webkitExitFullscreen)?.call(document);
+                }
+            });
+
+            const onChange = () => {
+                const active = document.fullscreenElement === container
+                    || document.webkitFullscreenElement === container;
+                // Saat fullscreen: kontainer mengisi layar & bisa scroll dua arah.
+                container.classList.toggle('bracket-fullscreen', active);
+                if (label) label.textContent = active ? 'Keluar Layar Penuh' : 'Layar Penuh';
+                redraw();
+            };
+
+            document.addEventListener('fullscreenchange', onChange);
+            document.addEventListener('webkitfullscreenchange', onChange);
+        }
 
         function setupBracketSlotSwapping() {
             const selects = Array.from(document.querySelectorAll('select[name^="matches"]'));
@@ -522,4 +578,35 @@
             setBracketMode(manual ? 'manual' : 'auto');
         }, 50);
     </script>
+@endpush
+
+@push('styles')
+<style>
+    /* N8 — scrollbar tipis & rapi untuk kontainer bagan yang melebar. */
+    .bracket-scroll { scrollbar-width: thin; scrollbar-color: #4f46e5 #1e293b; scroll-behavior: smooth; }
+    .bracket-scroll::-webkit-scrollbar { height: 10px; }
+    .bracket-scroll::-webkit-scrollbar-track { background: #1e293b; border-radius: 9999px; }
+    .bracket-scroll::-webkit-scrollbar-thumb { background: #4f46e5; border-radius: 9999px; }
+    .bracket-scroll::-webkit-scrollbar-thumb:hover { background: #6366f1; }
+
+    /* Mode layar penuh untuk bagan (Fullscreen API). Kontainer mengisi layar,
+       scroll dua arah, latar gelap, dengan padding lega. */
+    .bracket-fullscreen {
+        width: 100vw;
+        height: 100vh;
+        max-width: none;
+        overflow: auto;
+        padding: 2rem;
+        background: #0f172a;
+    }
+    /* Fallback browser yang memakai pseudo :fullscreen. */
+    #bracketScrollContainer:fullscreen,
+    #bracketScrollContainer:-webkit-full-screen {
+        width: 100vw;
+        height: 100vh;
+        overflow: auto;
+        padding: 2rem;
+        background: #0f172a;
+    }
+</style>
 @endpush

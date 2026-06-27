@@ -10,6 +10,7 @@
         body { font-family: 'Plus Jakarta Sans', sans-serif; }
         .glass-card { background: rgba(15, 23, 42, 0.88); backdrop-filter: blur(18px); }
     </style>
+    @stack('styles')
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen">
     <div class="min-h-screen pb-28">
@@ -60,7 +61,7 @@
 
     <nav class="fixed inset-x-0 bottom-0 z-50 border-t border-slate-800 bg-slate-950/95 backdrop-blur-sm">
         <div class="max-w-6xl mx-auto px-4 py-3">
-            <div class="grid grid-cols-4 gap-2 sm:grid-cols-7">
+            <div class="grid grid-cols-4 gap-2 sm:grid-cols-8">
                 <a href="{{ route('official.dashboard') }}" class="rounded-3xl px-3 py-3 text-center text-xs font-semibold {{ request()->routeIs('official.dashboard') ? 'bg-violet-500 text-white' : 'bg-slate-900 text-slate-300 hover:bg-slate-800' }}">
                     Beranda
                 </a>
@@ -76,10 +77,16 @@
                 <a href="{{ route('official.standings') }}" class="rounded-3xl px-3 py-3 text-center text-xs font-semibold {{ request()->routeIs('official.standings') ? 'bg-violet-500 text-white' : 'bg-slate-900 text-slate-300 hover:bg-slate-800' }}">
                     Klasemen
                 </a>
-                <span class="rounded-3xl bg-slate-900 px-3 py-3 text-center text-xs font-semibold text-slate-500 opacity-60">Bracket</span>
+                <a href="{{ route('official.bracket') }}" class="rounded-3xl px-3 py-3 text-center text-xs font-semibold {{ request()->routeIs('official.bracket') ? 'bg-violet-500 text-white' : 'bg-slate-900 text-slate-300 hover:bg-slate-800' }}">
+                    Bracket
+                </a>
+                <a href="{{ route('official.statistics') }}" class="rounded-3xl px-3 py-3 text-center text-xs font-semibold {{ request()->routeIs('official.statistics') ? 'bg-violet-500 text-white' : 'bg-slate-900 text-slate-300 hover:bg-slate-800' }}">
+                    Statistik
+                </a>
                 <span class="rounded-3xl bg-slate-900 px-3 py-3 text-center text-xs font-semibold text-slate-500 opacity-60">Profil</span>
             </div>
         </div>
     </nav>
+    @stack('scripts')
 </body>
 </html>

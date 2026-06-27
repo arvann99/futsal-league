@@ -15,7 +15,9 @@ class TournamentParticipantController extends Controller
 {
     public function index(Tournament $tournament)
     {
-        $participants = $tournament->tournamentTeams()->with(['team', 'players'])->get();
+        // N9 — eager-load 'officials' agar data Official/Manager yang diinput
+        // lewat portal manager juga tampil di panel Admin.
+        $participants = $tournament->tournamentTeams()->with(['team', 'players', 'officials'])->get();
 
         // R19 — agregasi statistik gol & kartu per pemain (via match_events.player_id)
         // untuk semua match di turnamen ini.
@@ -42,12 +44,34 @@ class TournamentParticipantController extends Controller
             $groupLabels = array_slice($letters, 0, (int) $tournament->groupSetting->group_count);
         }
 
+        // N1 — tentukan apakah slot pendaftaran sudah penuh agar tombol
+        // "Tambah Peserta" dinonaktifkan di view. Dua sumber batas:
+        //   (a) kapasitas grup (group_count × teams_per_group) — hanya saat bergrup;
+        //   (b) limit paket langganan admin (null = unlimited).
+        $current = $participants->count();
+        $groupCapacity = $usesGroups
+            ? (int) $tournament->groupSetting->group_count * (int) $tournament->groupSetting->teams_per_group
+            : 0;
+        $teamLimit = $tournament->creator?->teamLimit(); // null = unlimited
+
+        $isFull = false;
+        $fullReason = null;
+        if ($groupCapacity > 0 && $current >= $groupCapacity) {
+            $isFull = true;
+            $fullReason = "Kapasitas grup penuh ({$current}/{$groupCapacity} slot).";
+        } elseif ($teamLimit !== null && $current >= $teamLimit) {
+            $isFull = true;
+            $fullReason = "Batas paket tercapai (maks {$teamLimit} tim).";
+        }
+
         return view('admin.tournaments.participants.index', compact(
             'tournament',
             'participants',
             'usesGroups',
             'groupLabels',
-            'playerStats'
+            'playerStats',
+            'isFull',
+            'fullReason'
         ));
     }
 
@@ -91,8 +115,11 @@ class TournamentParticipantController extends Controller
 
         // R22+R14 — cek limit paket & kapasitas grup secara ATOMIK: lock baris
         // peserta turnamen ini agar dua request paralel tidak melewati batas.
+        // N3 — token manager di-generate otomatis saat peserta dibuat & ditampung
+        // untuk ditampilkan langsung (tidak perlu klik "Reset Token" lagi).
+        $managerToken = null;
         try {
-            \Illuminate\Support\Facades\DB::transaction(function () use ($tournament, $validated, $logoPath, $teamLimit, $groupCapacity) {
+            \Illuminate\Support\Facades\DB::transaction(function () use ($tournament, $validated, $logoPath, $teamLimit, $groupCapacity, &$managerToken) {
                 $current = TournamentTeam::where('tournament_id', $tournament->id)
                     ->lockForUpdate()
                     ->count();
@@ -105,12 +132,15 @@ class TournamentParticipantController extends Controller
                     throw new \RuntimeException('GROUP_FULL:' . $current . '/' . $groupCapacity);
                 }
 
+                $managerToken = Team::generateUniqueManagerToken($validated['name']);
+
                 $team = Team::create([
                     'name' => $validated['name'],
                     'slug' => $this->generateTeamSlug($validated['name']),
                     'logo' => $logoPath,
                     'city' => $validated['city'],
                     'country' => $validated['country'],
+                    'manager_token' => $managerToken,
                     'created_by' => $tournament->created_by,
                 ]);
 
@@ -142,8 +172,10 @@ class TournamentParticipantController extends Controller
         // Regenerate tournament schedule/bracket after participant added
         app(MatchGenerator::class)->generateForTournament($tournament);
 
+        // N3 — tampilkan token manager langsung di layar (success + sorot baris baru)
         return redirect()->route('tournaments.participants.index', $tournament)
-            ->with('success', 'Peserta berhasil ditambahkan ke turnamen.');
+            ->with('success', "Peserta \"{$validated['name']}\" berhasil ditambahkan. Token Manager: {$managerToken} — bagikan ke manajer tim untuk login portal.")
+            ->with('new_manager_token', $managerToken);
     }
 
     public function edit(Tournament $tournament, TournamentTeam $participant)
