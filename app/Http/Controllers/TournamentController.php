@@ -908,6 +908,84 @@ class TournamentController extends Controller
         ]);
     }
 
+    /**
+     * Simpan penempatan grup hasil edit manual (drag & drop) dari halaman
+     * Plotting/Undian. Menerima map { tournamentTeamId: groupLabel|null } lalu
+     * mem-persist ke tournament_teams (ditandai manual bila punya grup) dan
+     * meregenerasi jadwal. Dipakai agar admin bisa menukar tim antar grup
+     * tanpa mengacak ulang, dan hasilnya tetap tampil saat halaman dibuka lagi.
+     */
+    public function saveGroupPlotting(Request $request, Tournament $tournament)
+    {
+        $tournament->load('groupSetting');
+
+        $bracketSetting = AppSetting::where('key', $this->bracketSettingsKey($tournament))->first();
+        $competitionType = $bracketSetting?->value['competition_type'] ?? 'tournament';
+
+        if ($competitionType === 'tournament' || ! $tournament->groupSetting || ! $tournament->groupSetting->group_count) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Plotting grup tidak tersedia untuk tipe kompetisi ini.',
+            ], 422);
+        }
+
+        $groupCount = (int) $tournament->groupSetting->group_count;
+        $teamsPerGroup = (int) $tournament->groupSetting->teams_per_group;
+        $groupLabels = $this->buildGroupLabels($groupCount);
+
+        $validated = $request->validate([
+            'assignments' => ['required', 'array'],
+            'assignments.*' => ['nullable', 'string', 'in:' . implode(',', $groupLabels)],
+        ]);
+
+        // Hanya tim milik turnamen ini yang boleh diubah.
+        $teams = TournamentTeam::where('tournament_id', $tournament->id)
+            ->get()
+            ->keyBy('id');
+
+        // Validasi kapasitas per grup sebelum menyimpan apa pun.
+        $counts = array_fill_keys($groupLabels, 0);
+        foreach ($validated['assignments'] as $teamId => $label) {
+            if ($label !== null && $label !== '') {
+                $counts[$label] = ($counts[$label] ?? 0) + 1;
+            }
+        }
+        foreach ($counts as $label => $count) {
+            if ($teamsPerGroup > 0 && $count > $teamsPerGroup) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "Grup {$label} melebihi kapasitas ({$count}/{$teamsPerGroup}). Kurangi tim di grup tersebut sebelum menyimpan.",
+                ], 422);
+            }
+        }
+
+        \Illuminate\Support\Facades\DB::transaction(function () use ($validated, $teams) {
+            foreach ($validated['assignments'] as $teamId => $label) {
+                $team = $teams->get((int) $teamId);
+                if (! $team) {
+                    continue;
+                }
+
+                $label = ($label === '') ? null : $label;
+
+                $team->update([
+                    'group_label' => $label,
+                    // Penempatan manual dikunci agar tidak ditimpa auto-assign;
+                    // tim tanpa grup dilepas kuncinya.
+                    'group_assigned_manually' => $label !== null,
+                ]);
+            }
+        });
+
+        // Regenerasi jadwal grup + bracket sesuai penempatan baru.
+        app(MatchGenerator::class)->generateForTournament($tournament);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Penempatan grup tersimpan & jadwal diperbarui.',
+        ]);
+    }
+
     public function pointsSettings(Tournament $tournament)
     {
         $key = $this->pointSettingsKey($tournament);

@@ -57,6 +57,8 @@ Route::middleware(['auth', 'owns'])->group(function () {
     // R16 — undian / spin tim ke grup
     Route::get('/tournaments/{tournament}/group-draw', [TournamentController::class, 'groupDraw'])->name('tournaments.groupDraw');
     Route::post('/tournaments/{tournament}/group-draw', [TournamentController::class, 'performGroupDraw'])->name('tournaments.performGroupDraw');
+    // Simpan penempatan grup hasil edit manual (drag & drop)
+    Route::post('/tournaments/{tournament}/group-plotting', [TournamentController::class, 'saveGroupPlotting'])->name('tournaments.saveGroupPlotting');
 
     // Tournament Management Dashboard
     Route::get('/tournaments/{tournament}/manage', [TournamentController::class, 'manage'])->name('tournaments.manage');

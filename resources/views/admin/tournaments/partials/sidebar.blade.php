@@ -15,6 +15,10 @@
     $sidebarCompetitionType = $sidebarBracketSetting?->value['competition_type'] ?? 'tournament';
     $showStandingsMenu = $sidebarCompetitionType !== 'tournament';
     $showBracketMenu = $sidebarCompetitionType !== 'league';
+    // Menu Undian/Plotting Grup hanya relevan saat turnamen memakai grup
+    // (bukan gugur murni) dan jumlah grup sudah ditetapkan.
+    $showGroupDrawMenu = $sidebarCompetitionType !== 'tournament'
+        && ($tournament->groupSetting?->group_count ?? 0) > 0;
 
     $adminSidebarMenu = [
         [
@@ -59,6 +63,13 @@
             'active' => request()->routeIs('tournaments.participants.*'),
             'icon' => '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 19H9a6 6 0 016-6h.01M15 19h4a2 2 0 002-2v-5a6 6 0 00-6-6h-4a6 6 0 00-6 6v5a2 2 0 002 2h4m-12 0a2 2 0 012-2h8a2 2 0 012 2"></path>',
         ],
+        ...($showGroupDrawMenu ? [[
+            // Plotting/Undian Grup: acak tim ke grup lalu atur manual per tim
+            'label' => 'Plotting / Undian Grup',
+            'href' => route('tournaments.groupDraw', $tournament),
+            'active' => request()->routeIs('tournaments.groupDraw'),
+            'icon' => '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z"></path>',
+        ]] : []),
         [
             // N12 — Manajemen Pemain: statistik pemain & tim (ikon trofi)
             'label' => 'Manajemen Pemain',

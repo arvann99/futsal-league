@@ -59,6 +59,54 @@
                     — <span class="font-semibold">slot penuh.</span> Tombol "Tambah Peserta" dinonaktifkan.
                 @endif
             </div>
+
+            {{-- Ikhtisar Plotting Grup: lihat tim di tiap grup sekaligus, plus
+                 pintasan ke halaman Undian (acak) grup. Penempatan tetap diedit
+                 lewat dropdown di kolom "Grup" pada tabel di bawah. --}}
+            @php
+                $groupedParticipants = $participants->groupBy('group_label');
+                // Tim tanpa grup: group_label null / kosong / tidak termasuk grup valid.
+                $unassignedCount = $participants
+                    ->filter(fn ($p) => ! in_array($p->group_label, $groupLabels, true))
+                    ->count();
+            @endphp
+            <div class="mb-6 rounded-3xl border border-slate-800 bg-slate-900/70 p-5">
+                <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
+                    <div>
+                        <h3 class="text-sm font-semibold uppercase tracking-[0.2em] text-indigo-400">Plotting Grup</h3>
+                        <p class="text-xs text-slate-400 mt-1">Tim per grup saat ini. Ubah penempatan lewat dropdown "Grup" di tabel, atau acak semua sekaligus.</p>
+                    </div>
+                    <a href="{{ route('tournaments.groupDraw', $tournament) }}" class="self-start sm:self-auto px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 rounded-lg text-white text-sm font-semibold transition whitespace-nowrap">🎲 Acak / Undian Grup</a>
+                </div>
+                <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                    @foreach($groupLabels as $g)
+                        @php $teamsInGroup = $groupedParticipants->get($g) ?? collect(); @endphp
+                        <div class="rounded-2xl border border-slate-800 bg-slate-950/50 p-3">
+                            <div class="flex items-center justify-between mb-2">
+                                <span class="text-xs font-semibold uppercase tracking-[0.2em] text-slate-300">Grup {{ $g }}</span>
+                                <span class="text-[10px] text-slate-500">{{ $teamsInGroup->count() }}/{{ $tournament->groupSetting->teams_per_group }}</span>
+                            </div>
+                            @if($teamsInGroup->isEmpty())
+                                <p class="text-xs text-slate-600 italic">Belum ada tim</p>
+                            @else
+                                <ul class="space-y-1">
+                                    @foreach($teamsInGroup as $tp)
+                                        <li class="flex items-center gap-1.5 text-sm text-slate-200 truncate">
+                                            <span class="truncate">{{ $tp->team->name }}</span>
+                                            @if($tp->group_assigned_manually)
+                                                <span title="Ditetapkan manual / hasil undian" class="text-amber-400 text-[10px] shrink-0">🔒</span>
+                                            @endif
+                                        </li>
+                                    @endforeach
+                                </ul>
+                            @endif
+                        </div>
+                    @endforeach
+                </div>
+                @if($unassignedCount > 0)
+                    <p class="mt-3 text-xs text-amber-300/80">⚠️ {{ $unassignedCount }} tim belum masuk grup. Tetapkan lewat dropdown "Grup" di tabel atau jalankan Undian Grup.</p>
+                @endif
+            </div>
         @endif
 
         @if($participants->isEmpty())
