@@ -633,22 +633,79 @@ class MatchGenerator
             $slotCount *= 2;
         }
 
-        // Susun tim ke slot bracket dengan urutan seeding standar, lalu isi
-        // sisa slot dengan "Bye". Karena seed teratas menempati slot awal,
-        // bye akan jatuh pada lawan seed teratas — sehingga seed teratas yang
-        // melewati ronde pertama (mis. 3 tim: seed 1 langsung ke Final,
-        // seed 2 vs seed 3 di Semifinal).
+        // Susun tim ke slot bracket. Untuk jumlah tim pangkat 2 (byeCount = 0),
+        // pakai seeding standar apa adanya (seed 1 vs seed terbawah, dst.).
+        //
+        // Untuk jumlah tim BUKAN pangkat 2, penempatan "bye jatuh di slot mana
+        // pun seed_number > teamCount" (cara lama) menyebar bye tidak merata:
+        // sebagian seed teratas efektif MELOMPATI dua ronde sekaligus, sehingga
+        // muncul ronde awal yang nyaris kosong (mis. 9 tim → satu card "Round of
+        // 16" gantung sendirian) dan bagan terlihat aneh.
+        //
+        // Perbaikan: kumpulkan SEMUA bye di ronde pertama. Seed teratas
+        // (1..byeCount) mendapat bye langsung ke ronde kedua; sisa tim
+        // (byeCount+1..teamCount) bermain berpasangan di ronde pertama. Dengan
+        // begitu setiap match ronde pertama berupa (tim vs bye) untuk yang bye
+        // atau (tim vs tim) untuk yang bermain — tidak ada tim yang melompati
+        // dua ronde dan tidak ada card gantung.
         $slots = array_fill(0, $slotCount, 'Bye');
+        $byeCount = $slotCount - $teamCount;
+
         if ($preseeded) {
             // Pertahankan urutan apa adanya: slot[i] = positions[i].
             foreach ($positions as $slotIndex => $position) {
                 $slots[$slotIndex] = $position;
             }
-        } else {
+        } elseif ($byeCount === 0) {
+            // Bracket penuh (pangkat 2): seeding standar.
             $seedOrder = $this->bracketSeedOrder($slotCount);
             foreach ($seedOrder as $slotIndex => $seedNumber) {
-                if ($seedNumber <= $teamCount) {
-                    $slots[$slotIndex] = $positions[$seedNumber - 1];
+                $slots[$slotIndex] = $positions[$seedNumber - 1];
+            }
+        } else {
+            $seedOrder = $this->bracketSeedOrder($slotCount);
+
+            // Pasangan slot ronde pertama (2k, 2k+1), diurutkan dari pasangan
+            // yang memuat seed terkuat (angka seed terkecil). Bye diberikan ke
+            // pasangan-pasangan terkuat lebih dulu agar seed teratas yang bye.
+            $pairs = [];
+            for ($k = 0; $k < $slotCount; $k += 2) {
+                $strongSlot = $seedOrder[$k] < $seedOrder[$k + 1] ? $k : $k + 1;
+                $weakSlot = $strongSlot === $k ? $k + 1 : $k;
+                $pairs[] = [
+                    'strong' => $strongSlot,
+                    'weak' => $weakSlot,
+                    'best' => min($seedOrder[$k], $seedOrder[$k + 1]),
+                ];
+            }
+            usort($pairs, fn ($a, $b) => $a['best'] <=> $b['best']);
+
+            // Tim bye = seed 1..byeCount; tim bermain = seed byeCount+1..teamCount.
+            $byeSeeds = range(1, $byeCount);
+            $playSeeds = $teamCount > $byeCount ? range($byeCount + 1, $teamCount) : [];
+            $byeIndex = 0;
+            $playIndex = 0;
+
+            foreach ($pairs as $pair) {
+                if ($byeIndex < count($byeSeeds)) {
+                    // Pasangan bye: tim kuat di slot kuat, "Bye" di slot lemah.
+                    $slots[$pair['strong']] = $positions[$byeSeeds[$byeIndex] - 1];
+                    $slots[$pair['weak']] = 'Bye';
+                    $byeIndex++;
+                } else {
+                    // Pasangan bermain: isi dua tim (slot lemah jadi Bye hanya
+                    // bila jumlah tim bermain ganjil — tak terjadi karena
+                    // byeCount dan teamCount berselisih genap per pasangan).
+                    if ($playIndex < count($playSeeds)) {
+                        $slots[$pair['strong']] = $positions[$playSeeds[$playIndex] - 1];
+                        $playIndex++;
+                    }
+                    if ($playIndex < count($playSeeds)) {
+                        $slots[$pair['weak']] = $positions[$playSeeds[$playIndex] - 1];
+                        $playIndex++;
+                    } else {
+                        $slots[$pair['weak']] = 'Bye';
+                    }
                 }
             }
         }
