@@ -15,7 +15,10 @@
         // N14 — pecah kolom jadi model dua sisi (mirror); fallback satu-arah bila
         // struktur tak layak di-mirror.
         $mirror = \App\Services\MatchGenerator::splitBracketColumnsMirror($columns);
-        $cardHeight = 120;
+        // Estimasi tinggi kartu untuk kalkulasi tinggi kanvas mirror. Kartu
+        // publik ~135px; estimasi terlalu kecil membuat kanvas pendek dan SVG
+        // konektor terpotong di bawah.
+        $cardHeight = 150;
 
         $mirrorTops = null;
         $mirrorCanvasHeight = $canvasHeight;
@@ -49,9 +52,25 @@
         </button>
     </div>
 
-    <div class="bracket-scroll rounded-2xl border border-slate-800 bg-slate-900/70 p-4 overflow-x-auto" data-bracket-scroll="{{ $layoutId }}">
-        <div class="public-bracket-layout relative min-w-max" data-bracket-layout id="{{ $layoutId }}">
-            <svg class="absolute inset-0 w-full h-full pointer-events-none" data-bracket-svg xmlns="http://www.w3.org/2000/svg"></svg>
+    <div class="bracket-scroll relative rounded-2xl border border-slate-800 bg-slate-900/70 p-4 overflow-x-auto" data-bracket-scroll="{{ $layoutId }}">
+        {{-- N-zoom — tombol zoom mengambang, hanya relevan/terlihat saat layar penuh.
+             Harus berada DI DALAM elemen fullscreen, sebab konten di luar elemen
+             yang di-requestFullscreen() tidak ikut tampil (Fullscreen API). --}}
+        <div data-zoom-controls="{{ $layoutId }}" class="hidden sticky top-2 z-10 mb-2 items-center gap-1 self-start rounded-lg border border-slate-700 bg-slate-800/95 px-1.5 py-1 shadow-lg" style="width: max-content;">
+            <button type="button" data-zoom-out="{{ $layoutId }}" title="Perkecil"
+                    class="flex h-6 w-6 items-center justify-center rounded text-slate-200 transition hover:bg-slate-700">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"></path></svg>
+            </button>
+            <span data-zoom-value="{{ $layoutId }}" class="w-10 text-center text-[11px] font-semibold text-slate-300">100%</span>
+            <button type="button" data-zoom-in="{{ $layoutId }}" title="Perbesar"
+                    class="flex h-6 w-6 items-center justify-center rounded text-slate-200 transition hover:bg-slate-700">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+            </button>
+        </div>
+        <div class="public-bracket-layout relative min-w-max" data-bracket-layout data-bracket-zoom-target id="{{ $layoutId }}">
+            {{-- overflow-visible: bila kartu nyata lebih tinggi dari estimasi
+                 (nama tim wrap), garis konektor tetap tergambar utuh. --}}
+            <svg class="absolute inset-0 w-full h-full overflow-visible pointer-events-none" data-bracket-svg xmlns="http://www.w3.org/2000/svg"></svg>
 
             @if($mirror['enabled'])
                 {{-- N14 — layout mirror dua sisi: kiri → FINAL (tengah) ← kanan. --}}
@@ -111,9 +130,13 @@
                     {{-- Sisi kanan: mendekati final → ronde awal (cermin) --}}
                     @foreach($mirror['right'] as $rightColIdx => $column)
                         <div class="relative flex-shrink-0 w-[200px]" style="min-height: {{ $mirrorCanvasHeight }}px;">
+                            {{-- Kolom kosong (spacer penyejajar ronde, mis. R16 sisi
+                                 kanan pada bracket ganjil) tak diberi header. --}}
+                            @if(($column['matches'] ?? []) !== [])
                             <div class="mb-4 text-right">
                                 <p class="text-[10px] uppercase tracking-[0.24em] text-slate-400 font-semibold">{{ $column['label'] }} ({{ $column['teams'] }} Tim)</p>
                             </div>
+                            @endif
                             @foreach($column['matches'] as $localMatchIdx => $match)
                                 @include('public.bracket.partials.card', [
                                     'match' => $match,
@@ -177,6 +200,8 @@
         padding: 2rem;
         background: #0f172a;
     }
+
+    [data-bracket-zoom-target] { transform-origin: top left; transition: transform 0.15s ease; }
 </style>
 @endpush
 
@@ -198,11 +223,22 @@
         svg.setAttribute('height', height);
         svg.innerHTML = '';
 
+        // Anchor Y memakai tinggi NOMINAL (median) kartu, bukan tinggi kartu
+        // masing-masing: satu kartu yang lebih tinggi (nama wrap, catatan
+        // penalti) tidak boleh menggeser sikunya sendiri — garis kiri/kanan
+        // harus tetap sejajar cermin.
+        const cardHeights = cards
+            .map(c => c.getBoundingClientRect().height)
+            .sort((a, b) => a - b);
+        const nominalHalf = cardHeights.length
+            ? cardHeights[Math.floor(cardHeights.length / 2)] / 2
+            : 0;
+
         const anchor = (el, side) => {
             const r = el.getBoundingClientRect();
             return {
                 x: r.left - rect.left + (side === 'right' ? r.width : 0),
-                y: r.top - rect.top + r.height / 2,
+                y: r.top - rect.top + nominalHalf,
             };
         };
 
@@ -251,12 +287,18 @@
 
         const onChange = () => {
             document.querySelectorAll('[data-bracket-scroll]').forEach(container => {
+                const targetId = container.dataset.bracketScroll;
                 const active = document.fullscreenElement === container
                     || document.webkitFullscreenElement === container;
                 container.classList.toggle('bracket-fullscreen', active);
-                const btn = document.querySelector(`[data-fullscreen-btn="${container.dataset.bracketScroll}"]`);
+                const btn = document.querySelector(`[data-fullscreen-btn="${targetId}"]`);
                 const label = btn?.querySelector('[data-fullscreen-label]');
                 if (label) label.textContent = active ? 'Keluar Layar Penuh' : 'Layar Penuh';
+
+                const zoomControls = document.querySelector(`[data-zoom-controls="${targetId}"]`);
+                zoomControls?.classList.toggle('hidden', !active);
+                zoomControls?.classList.toggle('flex', active);
+                if (!active) setZoom(targetId, 1);
             });
             setTimeout(drawAll, 120);
         };
@@ -264,10 +306,34 @@
         document.addEventListener('webkitfullscreenchange', onChange);
     }
 
+    const zoomLevels = new Map();
+
+    function setZoom(targetId, level) {
+        const clamped = Math.min(2, Math.max(0.5, level));
+        zoomLevels.set(targetId, clamped);
+        const target = document.getElementById(targetId);
+        if (target) target.style.transform = `scale(${clamped})`;
+        const valueEl = document.querySelector(`[data-zoom-value="${targetId}"]`);
+        if (valueEl) valueEl.textContent = Math.round(clamped * 100) + '%';
+        setTimeout(drawAll, 160);
+    }
+
+    function setupZoom() {
+        document.querySelectorAll('[data-zoom-in]').forEach(btn => {
+            const targetId = btn.dataset.zoomIn;
+            btn.addEventListener('click', () => setZoom(targetId, (zoomLevels.get(targetId) ?? 1) + 0.1));
+        });
+        document.querySelectorAll('[data-zoom-out]').forEach(btn => {
+            const targetId = btn.dataset.zoomOut;
+            btn.addEventListener('click', () => setZoom(targetId, (zoomLevels.get(targetId) ?? 1) - 0.1));
+        });
+    }
+
     window.addEventListener('load', drawAll);
     window.addEventListener('resize', drawAll);
     document.addEventListener('DOMContentLoaded', () => {
         setupFullscreen();
+        setupZoom();
         setTimeout(drawAll, 50);
     });
 })();

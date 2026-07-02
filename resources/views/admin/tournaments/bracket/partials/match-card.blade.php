@@ -42,14 +42,16 @@
         <div class="text-[9px] uppercase tracking-[0.24em] text-slate-500 font-semibold mb-2">Match {{ $matchIndex + 1 }}</div>
         <div class="space-y-3">
                 <div class="rounded-2xl bg-slate-900 p-3 border {{ $homeIsWinner ? 'border-emerald-500/50' : 'border-slate-700' }}">
-                <div class="flex items-center justify-between mb-2 text-[8px] uppercase tracking-[0.24em] text-slate-500 font-semibold">
-                    <span>Tim 1</span>
-                    <span class="text-slate-400">{{ $leftDisplay }}</span>
+                <div class="flex items-center justify-between gap-2 mb-2 text-[8px] uppercase tracking-[0.24em] text-slate-500 font-semibold">
+                    <span class="shrink-0">Tim 1</span>
+                    {{-- truncate: nama panjang tak boleh wrap — kartu yang membengkak
+                         membuat titik tengahnya bergeser dan konektor jadi asimetris. --}}
+                    <span class="min-w-0 truncate text-slate-400" title="{{ $leftDisplay }}">{{ $leftDisplay }}</span>
                 </div>
                         <div class="flex items-center justify-between gap-2">
                         @if($leftEditable)
-                            <div class="auto-select">
-                                <p class="text-sm {{ $homeIsWinner ? 'text-emerald-300 font-semibold' : 'text-slate-200' }}">{{ $leftDisplay }}</p>
+                            <div class="auto-select min-w-0 flex-1">
+                                <p class="text-sm truncate {{ $homeIsWinner ? 'text-emerald-300 font-semibold' : 'text-slate-200' }}" title="{{ $leftDisplay }}">{{ $leftDisplay }}</p>
                                 <input type="hidden" name="matches[{{ $match['index'] }}][left]" value="{{ $leftSlot }}">
                                 <input type="hidden" name="matches[{{ $match['index'] }}][left_id]" value="{{ optional($assigned)->home_team_id ?? '' }}">
                             </div>
@@ -65,7 +67,7 @@
                                 </select>
                             </div>
                         @else
-                            <p class="text-sm text-slate-200">{{ $leftDisplay }}</p>
+                            <p class="min-w-0 flex-1 truncate text-sm text-slate-200" title="{{ $leftDisplay }}">{{ $leftDisplay }}</p>
                             <input type="hidden" name="matches[{{ $match['index'] }}][left]" value="{{ $leftSlot }}">
                             <input type="hidden" name="matches[{{ $match['index'] }}][left_id]" value="">
                         @endif
@@ -74,14 +76,14 @@
             </div>
 
             <div class="rounded-2xl bg-slate-900 p-3 border {{ $awayIsWinner ? 'border-emerald-500/50' : 'border-slate-700' }}">
-                <div class="flex items-center justify-between mb-2 text-[8px] uppercase tracking-[0.24em] text-slate-500 font-semibold">
-                    <span>Tim 2</span>
-                    <span class="text-slate-400">{{ $rightDisplay }}</span>
+                <div class="flex items-center justify-between gap-2 mb-2 text-[8px] uppercase tracking-[0.24em] text-slate-500 font-semibold">
+                    <span class="shrink-0">Tim 2</span>
+                    <span class="min-w-0 truncate text-slate-400" title="{{ $rightDisplay }}">{{ $rightDisplay }}</span>
                 </div>
                 <div class="flex items-center justify-between gap-2">
                 @if($rightEditable)
-                    <div class="auto-select">
-                        <p class="text-sm {{ $awayIsWinner ? 'text-emerald-300 font-semibold' : 'text-slate-200' }}">{{ $rightDisplay }}</p>
+                    <div class="auto-select min-w-0 flex-1">
+                        <p class="text-sm truncate {{ $awayIsWinner ? 'text-emerald-300 font-semibold' : 'text-slate-200' }}" title="{{ $rightDisplay }}">{{ $rightDisplay }}</p>
                         <input type="hidden" name="matches[{{ $match['index'] }}][right]" value="{{ $rightSlot }}">
                         <input type="hidden" name="matches[{{ $match['index'] }}][right_id]" value="{{ optional($assigned)->away_team_id ?? '' }}">
                     </div>
@@ -97,7 +99,7 @@
                         </select>
                     </div>
                 @else
-                    <p class="text-sm text-slate-200">{{ $rightDisplay }}</p>
+                    <p class="min-w-0 flex-1 truncate text-sm text-slate-200" title="{{ $rightDisplay }}">{{ $rightDisplay }}</p>
                     <input type="hidden" name="matches[{{ $match['index'] }}][right]" value="{{ $rightSlot }}">
                     <input type="hidden" name="matches[{{ $match['index'] }}][right_id]" value="">
                 @endif

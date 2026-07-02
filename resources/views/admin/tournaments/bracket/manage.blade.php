@@ -196,7 +196,11 @@
                         if ($mirror['enabled']) {
                             // Sisakan ruang di atas Final untuk centerpiece (piala + juara + FINAL).
                             $mirrorTopPadding = 160;
-                            $mirrorTops = \App\Services\MatchGenerator::computeMirrorCardTops($mirror, $rowUnit, $cardHeight, $mirrorTopPadding);
+                            // Tinggi kartu NYATA (~250px, bukan $cardHeight=120 yang
+                            // dipakai untuk jarak antar-baris) — dipakai agar kanvas
+                            // cukup tinggi dan SVG konektor tidak terpotong di bawah.
+                            $mirrorCardHeight = 250;
+                            $mirrorTops = \App\Services\MatchGenerator::computeMirrorCardTops($mirror, $rowUnit, $mirrorCardHeight, $mirrorTopPadding);
                             $mirrorCanvasHeight = $mirrorTops['height'] + $columnHeaderHeight;
                         }
                     @endphp
@@ -214,9 +218,25 @@
                         </button>
                     </div>
                     <div class="grid gap-4 mb-6 lg:grid-cols-[1fr_260px]">
-                        <div id="bracketScrollContainer" class="bracket-scroll bg-slate-900 rounded-xl border border-slate-800 p-4 overflow-x-auto">
+                        <div id="bracketScrollContainer" class="bracket-scroll relative bg-slate-900 rounded-xl border border-slate-800 p-4 overflow-x-auto">
+                            {{-- N-zoom — tombol zoom mengambang, hanya relevan/terlihat saat layar penuh.
+                                 Harus berada DI DALAM elemen fullscreen (Fullscreen API tidak
+                                 menampilkan elemen di luar target requestFullscreen()). --}}
+                            <div id="bracketZoomControls" class="hidden sticky top-2 z-10 mb-2 items-center gap-1 self-start rounded-lg border border-slate-700 bg-slate-800/95 px-1.5 py-1 shadow-lg" style="width: max-content;">
+                                <button type="button" id="bracketZoomOut" title="Perkecil"
+                                        class="flex h-6 w-6 items-center justify-center rounded text-slate-200 transition hover:bg-slate-700">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"></path></svg>
+                                </button>
+                                <span id="bracketZoomValue" class="w-10 text-center text-[11px] font-semibold text-slate-300">100%</span>
+                                <button type="button" id="bracketZoomIn" title="Perbesar"
+                                        class="flex h-6 w-6 items-center justify-center rounded text-slate-200 transition hover:bg-slate-700">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                                </button>
+                            </div>
                             <div id="bracketConnectorLayout" class="relative min-w-max">
-                                <svg id="bracketConnectorSvg" class="absolute inset-0 w-full h-full pointer-events-none" xmlns="http://www.w3.org/2000/svg"></svg>
+                                {{-- overflow-visible: bila kartu nyata lebih tinggi dari estimasi
+                                     (nama tim wrap), garis konektor tetap tergambar utuh. --}}
+                                <svg id="bracketConnectorSvg" class="absolute inset-0 w-full h-full overflow-visible pointer-events-none" xmlns="http://www.w3.org/2000/svg"></svg>
 
                                 @if($mirror['enabled'])
                                     {{-- N14 — layout mirror dua sisi: kiri → FINAL (tengah) ← kanan.
@@ -282,9 +302,12 @@
                                         {{-- Sisi kanan: mendekati final → ronde awal (cermin) --}}
                                         @foreach($mirror['right'] as $rightColIdx => $column)
                                             <div class="relative flex-shrink-0 w-[200px]" style="min-height: {{ $mirrorCanvasHeight }}px;">
+                                                {{-- Kolom kosong (spacer penyejajar ronde) tak diberi header. --}}
+                                                @if(($column['matches'] ?? []) !== [])
                                                 <div class="mb-4 text-right">
                                                     <p class="text-[10px] uppercase tracking-[0.24em] text-slate-400 font-semibold">{{ $column['label'] }} ({{ $column['teams'] }} Tim)</p>
                                                 </div>
+                                                @endif
                                                 @foreach($column['matches'] as $localMatchIdx => $match)
                                                     @include('admin.tournaments.bracket.partials.match-card', [
                                                         'match' => $match,
@@ -429,10 +452,21 @@
             svg.setAttribute('height', height);
             svg.innerHTML = '';
 
+            // Anchor Y memakai tinggi NOMINAL (median) kartu, bukan tinggi kartu
+            // masing-masing: satu kartu yang lebih tinggi (nama wrap, catatan
+            // penalti) tidak boleh menggeser sikunya sendiri — garis kiri/kanan
+            // harus tetap sejajar cermin.
+            const cardHeights = cardElements
+                .map(card => card.getBoundingClientRect().height)
+                .sort((a, b) => a - b);
+            const nominalHalfHeight = cardHeights.length
+                ? cardHeights[Math.floor(cardHeights.length / 2)] / 2
+                : 0;
+
             const getAnchor = (element, side) => {
                 const rect = element.getBoundingClientRect();
                 const x = rect.left - layoutRect.left + (side === 'right' ? rect.width : 0);
-                const y = rect.top - layoutRect.top + rect.height / 2;
+                const y = rect.top - layoutRect.top + nominalHalfHeight;
                 return { x, y };
             };
 
@@ -499,7 +533,14 @@
             const container = document.getElementById('bracketScrollContainer');
             const btn = document.getElementById('bracketFullscreenBtn');
             const label = document.getElementById('bracketFullscreenLabel');
+            const layout = document.getElementById('bracketConnectorLayout');
+            const zoomControls = document.getElementById('bracketZoomControls');
+            const zoomInBtn = document.getElementById('bracketZoomIn');
+            const zoomOutBtn = document.getElementById('bracketZoomOut');
+            const zoomValue = document.getElementById('bracketZoomValue');
             if (!container || !btn) return;
+
+            let zoomLevel = 1;
 
             const redraw = () => {
                 // Tunggu layout fullscreen stabil sebelum menggambar ulang konektor.
@@ -508,6 +549,16 @@
                     updateThirdPlacePanel();
                 }, 120);
             };
+
+            const setZoom = (level) => {
+                zoomLevel = Math.min(2, Math.max(0.5, level));
+                if (layout) layout.style.transform = `scale(${zoomLevel})`;
+                if (zoomValue) zoomValue.textContent = Math.round(zoomLevel * 100) + '%';
+                redraw();
+            };
+
+            zoomInBtn?.addEventListener('click', () => setZoom(zoomLevel + 0.1));
+            zoomOutBtn?.addEventListener('click', () => setZoom(zoomLevel - 0.1));
 
             btn.addEventListener('click', () => {
                 const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
@@ -524,6 +575,9 @@
                 // Saat fullscreen: kontainer mengisi layar & bisa scroll dua arah.
                 container.classList.toggle('bracket-fullscreen', active);
                 if (label) label.textContent = active ? 'Keluar Layar Penuh' : 'Layar Penuh';
+                zoomControls?.classList.toggle('hidden', !active);
+                zoomControls?.classList.toggle('flex', active);
+                if (!active) setZoom(1);
                 redraw();
             };
 
@@ -608,5 +662,7 @@
         padding: 2rem;
         background: #0f172a;
     }
+
+    #bracketConnectorLayout { transform-origin: top left; transition: transform 0.15s ease; }
 </style>
 @endpush

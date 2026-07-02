@@ -37,13 +37,15 @@
         <div class="space-y-3">
             <div class="rounded-2xl bg-slate-900 p-3 border {{ $homeIsWinner ? 'border-emerald-500/50' : 'border-slate-700' }}">
                 <div class="flex items-center justify-between gap-2">
-                    <p class="text-sm {{ $homeIsWinner ? 'text-emerald-300 font-semibold' : 'text-slate-200' }}">{{ $leftDisplay }}</p>
+                    {{-- truncate: nama panjang tak boleh wrap — kartu yang membengkak
+                         membuat titik tengahnya bergeser dan konektor jadi asimetris. --}}
+                    <p class="min-w-0 flex-1 truncate text-sm {{ $homeIsWinner ? 'text-emerald-300 font-semibold' : 'text-slate-200' }}" title="{{ $leftDisplay }}">{{ $leftDisplay }}</p>
                     <span class="shrink-0 min-w-[28px] text-center text-base font-bold tabular-nums {{ $homeIsWinner ? 'text-emerald-300' : ($played ? 'text-slate-100' : 'text-slate-500') }}">{{ $homeScoreText }}</span>
                 </div>
             </div>
             <div class="rounded-2xl bg-slate-900 p-3 border {{ $awayIsWinner ? 'border-emerald-500/50' : 'border-slate-700' }}">
                 <div class="flex items-center justify-between gap-2">
-                    <p class="text-sm {{ $awayIsWinner ? 'text-emerald-300 font-semibold' : 'text-slate-200' }}">{{ $rightDisplay }}</p>
+                    <p class="min-w-0 flex-1 truncate text-sm {{ $awayIsWinner ? 'text-emerald-300 font-semibold' : 'text-slate-200' }}" title="{{ $rightDisplay }}">{{ $rightDisplay }}</p>
                     <span class="shrink-0 min-w-[28px] text-center text-base font-bold tabular-nums {{ $awayIsWinner ? 'text-emerald-300' : ($played ? 'text-slate-100' : 'text-slate-500') }}">{{ $awayScoreText }}</span>
                 </div>
             </div>

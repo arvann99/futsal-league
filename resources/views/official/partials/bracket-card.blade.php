@@ -39,18 +39,20 @@
         <div class="space-y-3">
             <div class="rounded-2xl bg-slate-900 p-3 border {{ $homeIsWinner ? 'border-emerald-500/50' : 'border-slate-700' }}">
                 <div class="flex items-center justify-between gap-2">
-                    <p class="text-sm {{ $homeIsWinner ? 'text-emerald-300 font-semibold' : 'text-slate-200' }}">
-                        {{ $leftDisplay }}
-                        @if($homeIsMine)<span class="ml-1 inline-flex rounded-full bg-violet-500/20 px-2 py-0.5 text-[9px] font-semibold text-violet-200">Tim Anda</span>@endif
+                    {{-- truncate: nama panjang tak boleh wrap — kartu yang membengkak
+                         membuat titik tengahnya bergeser dan konektor jadi asimetris. --}}
+                    <p class="flex min-w-0 flex-1 items-center text-sm {{ $homeIsWinner ? 'text-emerald-300 font-semibold' : 'text-slate-200' }}">
+                        <span class="truncate" title="{{ $leftDisplay }}">{{ $leftDisplay }}</span>
+                        @if($homeIsMine)<span class="ml-1 inline-flex shrink-0 rounded-full bg-violet-500/20 px-2 py-0.5 text-[9px] font-semibold text-violet-200">Tim Anda</span>@endif
                     </p>
                     <span class="shrink-0 min-w-[28px] text-center text-base font-bold tabular-nums {{ $homeIsWinner ? 'text-emerald-300' : ($played ? 'text-slate-100' : 'text-slate-500') }}">{{ $homeScoreText }}</span>
                 </div>
             </div>
             <div class="rounded-2xl bg-slate-900 p-3 border {{ $awayIsWinner ? 'border-emerald-500/50' : 'border-slate-700' }}">
                 <div class="flex items-center justify-between gap-2">
-                    <p class="text-sm {{ $awayIsWinner ? 'text-emerald-300 font-semibold' : 'text-slate-200' }}">
-                        {{ $rightDisplay }}
-                        @if($awayIsMine)<span class="ml-1 inline-flex rounded-full bg-violet-500/20 px-2 py-0.5 text-[9px] font-semibold text-violet-200">Tim Anda</span>@endif
+                    <p class="flex min-w-0 flex-1 items-center text-sm {{ $awayIsWinner ? 'text-emerald-300 font-semibold' : 'text-slate-200' }}">
+                        <span class="truncate" title="{{ $rightDisplay }}">{{ $rightDisplay }}</span>
+                        @if($awayIsMine)<span class="ml-1 inline-flex shrink-0 rounded-full bg-violet-500/20 px-2 py-0.5 text-[9px] font-semibold text-violet-200">Tim Anda</span>@endif
                     </p>
                     <span class="shrink-0 min-w-[28px] text-center text-base font-bold tabular-nums {{ $awayIsWinner ? 'text-emerald-300' : ($played ? 'text-slate-100' : 'text-slate-500') }}">{{ $awayScoreText }}</span>
                 </div>
