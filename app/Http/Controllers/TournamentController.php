@@ -2035,7 +2035,7 @@ class TournamentController extends Controller
 
         $bracketRows = TournamentMatch::where('tournament_id', $tournament->id)
             ->whereIn('stage_type', $bracketStages)
-            ->get(['id', 'leg', 'round_name', 'is_third_place', 'is_bye']);
+            ->get(['id', 'leg', 'bracket_match_id', 'round_name', 'is_third_place', 'is_bye']);
 
         // Row yang seharusnya 2 leg pada mode home_away (Final/Third Place/bye
         // tetap single match).
@@ -2049,8 +2049,26 @@ class TournamentController extends Controller
 
         $matchTypeChanged = ($currentValue['match_type'] ?? 'single') !== $validated['match_type'];
 
-        if ($bracketRows->isNotEmpty() && ($matchTypeChanged || $structureMismatch)) {
+        // Grup → Gugur: bentuk bagan tersimpan (pasangan id match × ronde) bisa
+        // berbeda dari struktur baru — mis. row lama dibuat sebelum perbaikan
+        // penempatan bye (bye menumpuk di dasar bracket, match "Bye vs Bye").
+        // Jika berbeda, row knockout perlu digenerate ulang.
+        $bracketShapeChanged = false;
+        if ($competitionType === 'group_knockout') {
+            $expectedShape = collect($matches)
+                ->map(fn ($m) => (($m['id'] ?? 0) . '#' . ($m['round'] ?? '')))
+                ->sort()->values()->all();
+            $actualShape = $bracketRows
+                ->map(fn ($row) => ($row->bracket_match_id . '#' . $row->round_name))
+                ->unique()->sort()->values()->all();
+            $bracketShapeChanged = $expectedShape !== $actualShape;
+        }
+
+        if ($bracketRows->isNotEmpty() && ($matchTypeChanged || $structureMismatch || $bracketShapeChanged)) {
+            // Hanya hasil pada babak GUGUR yang menghalangi regenerasi — hasil
+            // fase grup tidak masalah karena row grup tidak disentuh.
             $hasDirtyMatches = TournamentMatch::where('tournament_id', $tournament->id)
+                ->whereIn('stage_type', $bracketStages)
                 ->where(function ($query) {
                     $query->where('status', '!=', 'scheduled')
                         ->orWhereNotNull('home_score')
@@ -2063,6 +2081,13 @@ class TournamentController extends Controller
             } elseif ($competitionType === 'tournament') {
                 app(MatchGenerator::class)->generateForTournament($tournament);
                 $successMessage = 'Pengaturan Bagan Bracket berhasil disimpan dan jadwal knockout digenerate ulang!';
+            } elseif ($competitionType === 'group_knockout') {
+                // Regenerasi row knockout saja; jadwal & hasil fase grup utuh.
+                // Slot dari grup yang sudah selesai langsung diisi ulang dari
+                // klasemen akhir grup tersebut.
+                app(MatchGenerator::class)->regenerateKnockoutMatches($tournament);
+                $this->fillBracketFromFinalStandings($tournament, $this->buildStandingsGroups($tournament));
+                $successMessage = 'Pengaturan Bagan Bracket berhasil disimpan dan bagan gugur digenerate ulang! Jadwal dan hasil fase grup tidak berubah.';
             }
         }
 

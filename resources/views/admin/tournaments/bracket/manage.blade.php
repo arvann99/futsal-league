@@ -17,13 +17,13 @@
                                 <p class="text-slate-400 text-sm mt-2">Sistem liga biasa tidak menggunakan bracket gugur.</p>
                             @elseif($playoffMode === 'relegation')
                                 <h1 class="text-2xl sm:text-3xl font-bold">Isi Slot Tim Play Off Degradasi</h1>
-                                <p class="text-slate-400 text-sm mt-2">Pilih tim degradasi dari fase grup untuk mengisi slot awal bracket degradasi. Hanya slot putaran pertama yang dapat diisi langsung.</p>
+                                <p class="text-slate-400 text-sm mt-2">Pilih tim degradasi dari fase grup untuk mengisi slot awal bracket degradasi. Semua slot berisi posisi grup dapat diisi langsung — termasuk slot tim yang mendapat bye di ronde kedua.</p>
                             @elseif($competitionType === 'tournament')
                                 <h1 class="text-2xl sm:text-3xl font-bold">Bracket Babak Gugur</h1>
                                 <p class="text-slate-400 text-sm mt-2">Slot bracket terisi otomatis dari tim yang lolos verifikasi (tanpa fase grup). Susunan slot putaran pertama dapat diatur ulang secara manual.</p>
                             @else
                                 <h1 class="text-2xl sm:text-3xl font-bold">Isi Slot Tim Knockout</h1>
-                                <p class="text-slate-400 text-sm mt-2">Pilih tim yang lolos dari fase grup untuk mengisi slot awal bracket. Hanya slot putaran pertama yang dapat diisi langsung.</p>
+                                <p class="text-slate-400 text-sm mt-2">Pilih tim yang lolos dari fase grup untuk mengisi slot awal bracket. Semua slot berisi posisi grup (mis. A1) dapat diisi langsung — termasuk slot tim yang mendapat bye di ronde kedua.</p>
                             @endif
                         </div>
                         @unless($competitionType === 'league')
@@ -410,9 +410,9 @@
                             <div class="bg-slate-900 rounded-xl border border-slate-800 p-6">
                                 <h2 class="text-lg font-semibold text-white mb-3">Panduan Singkat</h2>
                                 <ul class="text-sm text-slate-300 list-disc list-inside space-y-2">
-                                    <li>Pilih tim untuk setiap slot putaran pertama jika tersedia.</li>
+                                    <li>Pilih tim untuk setiap slot berisi posisi grup (mis. <code>A1</code>) jika tersedia — tim yang mendapat bye slotnya berada langsung di ronde kedua.</li>
                                     <li>Slot selanjutnya otomatis menunggu pemenang dari match sebelumnya.</li>
-                                    <li>Jika slot sudah berisi <code>Bye</code> atau <code>Pemenang</code>, itu tidak dapat diubah secara manual.</li>
+                                    <li>Jika slot sudah berisi <code>Pemenang</code>, itu tidak dapat diubah secara manual.</li>
                                 </ul>
                             </div>
                         </div>

@@ -194,6 +194,43 @@ class MatchGenerator
     }
 
     /**
+     * Regenerasi HANYA row stage knockout dari struktur bracket yang tersimpan
+     * di pengaturan — jadwal & hasil fase grup tidak disentuh. Dipakai saat
+     * struktur bracket berubah (mis. perbaikan penempatan bye) pada turnamen
+     * Grup → Gugur yang fase grupnya sudah/sedang berjalan. Penempatan tim pada
+     * slot direset ke placeholder; pemanggil bertanggung jawab mengisi ulang
+     * dari klasemen grup yang sudah selesai (fillBracketFromFinalStandings).
+     * Pastikan tidak ada match knockout yang sudah punya hasil sebelum
+     * memanggil ini.
+     */
+    public function regenerateKnockoutMatches(Tournament $tournament): void
+    {
+        $bracketValue = $this->getBracketSetting($tournament)->value ?? [];
+        $structure = $bracketValue['matches'] ?? [];
+
+        if (empty($structure)) {
+            return;
+        }
+
+        $matches = $this->buildBracketMatchesFromArray(
+            $tournament,
+            $structure,
+            'knockout',
+            null,
+            $bracketValue['match_type'] ?? 'single'
+        );
+
+        DB::transaction(function () use ($tournament, $matches) {
+            TournamentMatch::where('tournament_id', $tournament->id)
+                ->where('stage_type', 'knockout')
+                ->delete();
+
+            TournamentMatch::insert($matches);
+            $this->attachBracketNextMatchIds($tournament);
+        });
+    }
+
+    /**
      * Daftar tim yang lolos verifikasi, diurutkan berdasarkan seed.
      */
     private function approvedTeamDescriptors(Tournament $tournament): array
@@ -377,20 +414,108 @@ class MatchGenerator
      * Struktur bracket Grup → Gugur (placeholder posisi grup A1/B2/...) dengan
      * seeding silang juara × runner-up. Dipakai controller saat menyimpan
      * pengaturan bracket maupun saat (re)generasi match.
+     *
+     * Pola silang hanya dipakai saat berlaku bersih: tepat 2 lolos per grup
+     * DAN jumlah tim pangkat 2 — urutan silang dipertahankan persis
+     * (preseeded). Di luar itu (bracket ber-bye, atau jumlah lolos per grup
+     * selain 2) posisi disusun dengan prioritas per PERINGKAT (semua juara
+     * grup dulu, lalu runner-up, dst.) lalu diserahkan ke jalur seeding
+     * standar. Untuk bracket ber-bye artinya bye terkumpul di ronde pertama
+     * dan dibagikan per peringkat: tidak ada match "Bye vs Bye", tidak ada tim
+     * melompati dua ronde, dan pohon bracket tetap seimbang (layout mirror
+     * simetris tanpa konektor menyilang). Untuk bracket penuh artinya seed
+     * teratas bertemu seed terbawah tanpa mempertemukan sesama grup di ronde
+     * pertama (urutan-standar lama menghasilkan A1 vs A2).
      */
     public function buildGroupKnockoutStructure(int $groupCount, array $qualifiedRanks, bool $includeThirdPlace = false): array
     {
-        $positions = $this->crossGroupSeedPositions($groupCount, $qualifiedRanks);
+        $ranks = array_values(array_unique(array_map('intval', $qualifiedRanks)));
+        sort($ranks);
+        $teamCount = max(0, $groupCount) * count($ranks);
 
-        if (count($positions) < 2) {
+        if ($teamCount < 2) {
             return [];
         }
 
+        $isPowerOfTwo = ($teamCount & ($teamCount - 1)) === 0;
+
+        if ($isPowerOfTwo && $ranks === [1, 2] && $groupCount % 2 === 0) {
+            return $this->buildBracketStructure(
+                $this->crossGroupSeedPositions($groupCount, $qualifiedRanks),
+                $includeThirdPlace,
+                true // preseeded: jaga urutan silang juara × runner-up
+            );
+        }
+
         return $this->buildBracketStructure(
-            $positions,
-            $includeThirdPlace,
-            true // preseeded: jaga urutan silang juara × runner-up
+            $this->rankPriorityPositions($groupCount, $qualifiedRanks),
+            $includeThirdPlace
         );
+    }
+
+    /**
+     * Urutan posisi grup dengan prioritas PERINGKAT untuk bracket ber-bye:
+     * seluruh posisi peringkat terbaik dari semua grup dulu (A1, B1, C1, ...),
+     * baru peringkat berikutnya, dst. Karena bye ronde pertama jatuh ke seed
+     * teratas, dengan urutan ini bye dibagikan per peringkat — bukan per abjad
+     * grup (cara lama membuat grup awal selalu diuntungkan dan grup akhir
+     * selalu kebagian play-in).
+     *
+     * Urutan grup di dalam tiap peringkat dicoba dua pola — searah (A,B,C,...)
+     * dan ular/serpentine (arah bolak-balik per peringkat) — lalu dipilih yang
+     * bentrok segrupnya PASTI paling sedikit. Serpentine menjauhkan posisi
+     * segrup sehingga mis. 3 grup × 3 lolos bebas bentrok segrup sama sekali,
+     * tetapi pada konfigurasi lain justru pola searah yang bebas bentrok.
+     */
+    private function rankPriorityPositions(int $groupCount, array $qualifiedRanks): array
+    {
+        $groupLabels = array_slice(
+            ['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P'],
+            0,
+            max(0, $groupCount)
+        );
+
+        $ranks = array_values(array_unique(array_map('intval', $qualifiedRanks)));
+        sort($ranks);
+
+        $straight = [];
+        $serpentine = [];
+        foreach ($ranks as $rankIndex => $rank) {
+            $serpentineLabels = $rankIndex % 2 === 1 ? array_reverse($groupLabels) : $groupLabels;
+
+            foreach ($groupLabels as $group) {
+                $straight[] = $group . $rank;
+            }
+            foreach ($serpentineLabels as $group) {
+                $serpentine[] = $group . $rank;
+            }
+        }
+
+        return $this->countCertainSameGroupMeetings($serpentine)
+            < $this->countCertainSameGroupMeetings($straight)
+            ? $serpentine
+            : $straight;
+    }
+
+    /**
+     * Jumlah match pada struktur bracket yang PASTI mempertemukan dua posisi
+     * dari grup yang sama (kedua slot masih placeholder posisi, mis. C1 vs C2
+     * — baik di ronde pertama maupun sesama penerima bye di ronde kedua).
+     * Dipakai memilih urutan posisi terbaik di rankPriorityPositions().
+     */
+    private function countCertainSameGroupMeetings(array $positions): int
+    {
+        $clashes = 0;
+
+        foreach ($this->buildBracketStructure($positions) as $match) {
+            if (preg_match('/^([A-P])\d+$/', (string) $match['left'], $left)
+                && preg_match('/^([A-P])\d+$/', (string) $match['right'], $right)
+                && $left[1] === $right[1]) {
+                $clashes++;
+            }
+        }
+
+        return $clashes;
     }
 
     /**
@@ -618,7 +743,11 @@ class MatchGenerator
      * Bila $preseeded = true, $positions dianggap sudah dalam urutan slot final
      * (pasangan ronde pertama = posisi 0×1, 2×3, ...) dan reorder seeding standar
      * dilewati. Dipakai mode Grup → Gugur agar pasangan silang juara × runner-up
-     * antar grup tidak diacak ulang.
+     * antar grup tidak diacak ulang. Urutan slot hanya bisa dipertahankan penuh
+     * saat jumlah tim pangkat 2; bila ada bye, $positions diperlakukan sebagai
+     * urutan prioritas seed dan bye dikumpulkan di ronde pertama (jalur yang
+     * sama dengan seeding standar) — mengisi slot urut dari atas akan menumpuk
+     * semua bye di dasar bracket (match "Bye vs Bye", pohon berat sebelah).
      */
     public function buildBracketStructure(array $positions, bool $includeThirdPlace = false, bool $preseeded = false): array
     {
@@ -651,8 +780,11 @@ class MatchGenerator
         $slots = array_fill(0, $slotCount, 'Bye');
         $byeCount = $slotCount - $teamCount;
 
-        if ($preseeded) {
+        if ($preseeded && $byeCount === 0) {
             // Pertahankan urutan apa adanya: slot[i] = positions[i].
+            // Khusus bracket penuh — dengan bye, preseeded ikut jalur
+            // kumpul-bye di bawah ($positions = urutan prioritas seed) agar
+            // bye tidak menumpuk di dasar bracket.
             foreach ($positions as $slotIndex => $position) {
                 $slots[$slotIndex] = $position;
             }
@@ -856,10 +988,14 @@ class MatchGenerator
      * KIRI (mengerucut ke kanan), separuh lagi sisi KANAN (mengerucut ke kiri),
      * bertemu di FINAL yang berada di tengah.
      *
-     * Strategi pembelahan: per-ronde 50/50. Untuk tiap ronde feeder, match
-     * dibelah dua — paruh pertama ke kiri, paruh kedua ke kanan (kiri dapat
-     * satu lebih banyak bila jumlahnya ganjil). Final (kolom terakhir, 1 match)
-     * ditaruh di zona tengah.
+     * Strategi pembelahan: per SUBTREE pengumpan Final (relasi next_match_id).
+     * Pengumpan pertama Final beserta seluruh rantai pengumpannya → sisi KIRI;
+     * pengumpan kedua beserta rantainya → sisi KANAN. Final (kolom terakhir,
+     * 1 match) ditaruh di zona tengah. Pembelahan per-ronde 50/50 berdasarkan
+     * indeks (cara lama) salah pada bracket ber-bye: jumlah match tiap paruh
+     * pohon bisa beda (mis. 15 tim → play-in 3 match di paruh atas, 4 di paruh
+     * bawah), sehingga sebagian match ditaruh di sisi yang bukan sisi match
+     * tujuannya dan konektornya menyilang ke seberang bagan.
      *
      * Tiap entri match diperkaya dengan:
      *   - 'column_index' : indeks kolom asli (untuk lookup $cardTops)
@@ -898,19 +1034,53 @@ class MatchGenerator
 
         $feederColumns = array_slice($columns, 0, $columnCount - 1);
 
+        // Tentukan sisi tiap match dari subtree pengumpan Final: telusuri kolom
+        // dari yang terdalam (dekat Final) ke terluar — pengumpan langsung
+        // Final di-seed kiri/kanan, match lain mewarisi sisi match tujuannya.
+        $finalMatch = array_values($finalColumn['matches'])[0];
+        $finalId = $finalMatch['id'] ?? null;
+        if ($finalId === null) {
+            return $disabled;
+        }
+
+        $sideById = [];
+        $finalFeederCount = 0;
+        for ($ci = count($feederColumns) - 1; $ci >= 0; $ci--) {
+            foreach ($feederColumns[$ci]['matches'] ?? [] as $match) {
+                $id = $match['id'] ?? null;
+                $target = $match['next_match_id'] ?? null;
+
+                if ($id === null) {
+                    return $disabled;
+                }
+
+                if ($target == $finalId) {
+                    $sideById[$id] = $finalFeederCount === 0 ? 'left' : 'right';
+                    $finalFeederCount++;
+                } elseif ($target !== null && isset($sideById[$target])) {
+                    $sideById[$id] = $sideById[$target];
+                } else {
+                    // Graf tak konsisten (target hilang / tanpa target) —
+                    // fallback layout satu arah yang selalu aman.
+                    return $disabled;
+                }
+            }
+        }
+
+        // Final berpengumpan tunggal (mis. bracket 3 tim) tak layak mirror.
+        if ($finalFeederCount < 2) {
+            return $disabled;
+        }
+
         $leftColumns = [];
         $rightColumns = [];
 
         foreach ($feederColumns as $columnIndex => $column) {
             $matches = array_values($column['matches'] ?? []);
-            $total = count($matches);
 
-            if ($total === 0) {
+            if ($matches === []) {
                 continue;
             }
-
-            // Kiri dapat ceil(total/2), kanan sisanya.
-            $leftCount = (int) ceil($total / 2);
 
             $leftMatches = [];
             $rightMatches = [];
@@ -918,12 +1088,11 @@ class MatchGenerator
             foreach ($matches as $matchIndex => $match) {
                 $match['column_index'] = $columnIndex;
                 $match['match_index'] = $matchIndex;
+                $match['side'] = $sideById[$match['id']];
 
-                if ($matchIndex < $leftCount) {
-                    $match['side'] = 'left';
+                if ($match['side'] === 'left') {
                     $leftMatches[] = $match;
                 } else {
-                    $match['side'] = 'right';
                     $rightMatches[] = $match;
                 }
             }
@@ -937,13 +1106,13 @@ class MatchGenerator
             // kosong (bug garis kanan-bawah pada 9 tim).
             $leftColumns[] = [
                 'label' => $column['label'],
-                'teams' => $column['teams'] ?? ($total * 2),
+                'teams' => $column['teams'] ?? (count($matches) * 2),
                 'matches' => $leftMatches,
             ];
 
             $rightColumns[] = [
                 'label' => $column['label'],
-                'teams' => $column['teams'] ?? ($total * 2),
+                'teams' => $column['teams'] ?? (count($matches) * 2),
                 'matches' => $rightMatches,
             ];
         }
