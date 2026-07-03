@@ -664,6 +664,13 @@ class MatchGenerator
             $roundName = $roundLabelPrefix . ' ' . ($roundIndex + 1);
 
             foreach ($round as $match) {
+                // Round-robin dengan jumlah tim ganjil menyisipkan "Bye" virtual
+                // agar genap. Laga melawan Bye bukan pertandingan nyata (tim
+                // menganggur di ronde itu) — jangan dibuat sebagai laga grup/liga.
+                if (! empty($match['is_bye'])) {
+                    continue;
+                }
+
                 $home = $match['home'];
                 $away = $match['away'];
 

@@ -121,6 +121,7 @@
                         <input type="number" name="teams_per_group" id="teamsPerGroup"
                             value="{{ old('teams_per_group', $tournament->groupSetting->teams_per_group) }}"
                             id="teamsPerGroup" data-min-tournament="2" data-min-league="3"
+                            data-max-group-knockout="8" data-capacity="64"
                             min="2" max="20"
                             class="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-400 focus:border-indigo-500 focus:outline-none transition"
                             onchange="updateQualifiedTeams()"
@@ -136,6 +137,7 @@
                             class="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-400 focus:border-indigo-500 focus:outline-none transition"
                             {{ $isLocked ? 'disabled' : '' }}
                             @if($competitionType === 'league' && ! $isLocked) readonly @endif>
+                        <p class="text-xs text-slate-500 mt-1 hidden" id="groupCountHint"></p>
                     </div>
                 </div>
             </div>
@@ -380,11 +382,17 @@
 
         const teamsPerGroupInput = document.getElementById('teamsPerGroup');
         const minValue = (isLeague || isLeaguePlayoff || isGroupKnockout) ? 3 : 2;
-        
-        // Update min attribute dan hint text
+        // Grup → Gugur dibatasi max tim per grup (mis. 8); tipe lain tetap 20.
+        const maxTeamsPerGroup = isGroupKnockout
+            ? parseInt(teamsPerGroupInput.dataset.maxGroupKnockout) || 8
+            : 20;
+
+        // Update min/max attribute dan hint text
         teamsPerGroupInput.min = minValue;
-        document.getElementById('teamsPerGroupHint').textContent = `Minimum: ${minValue} tim`;
-        
+        teamsPerGroupInput.max = maxTeamsPerGroup;
+        document.getElementById('teamsPerGroupHint').textContent =
+            isGroupKnockout ? `Antara ${minValue}–${maxTeamsPerGroup} tim` : `Minimum: ${minValue} tim`;
+
         let teamsPerGroup = parseInt(teamsPerGroupInput.value) || minValue;
 
         // Validasi minimum berdasarkan tipe kompetisi
@@ -396,11 +404,14 @@
             teamsPerGroupInput.value = 2;
         }
 
-        if (teamsPerGroup > 20) {
-            alert('Jumlah tim maksimal 20');
-            teamsPerGroupInput.value = 20;
-            return;
+        if (teamsPerGroup > maxTeamsPerGroup) {
+            alert(`Jumlah tim per grup maksimal ${maxTeamsPerGroup}`);
+            teamsPerGroup = maxTeamsPerGroup;
+            teamsPerGroupInput.value = maxTeamsPerGroup;
         }
+
+        // Batasi jumlah grup secara dinamis mengikuti kapasitas 64 tim.
+        updateGroupCountLimit();
 
         // Qualified dipakai liga-playoff (promosi) & grup→gugur; liga memakai degradasi
         const playoffType = isLeaguePlayoff ? (document.querySelector('input[name="playoff_type"]:checked')?.value || '') : '';
@@ -499,6 +510,43 @@
         updateSelectedInfo();
     }
 
+    // Batas aman: total peserta fase grup (grup × tim per grup) tidak boleh
+    // melebihi kapasitas bracket (64 tim). Jumlah grup maksimal dibulatkan ke
+    // bawah, mis. 64 ÷ 5 = 12.8 → 12 grup. Hanya berlaku untuk Grup → Gugur.
+    function updateGroupCountLimit() {
+        const selectedType = document.querySelector('input[name="competition_type"]:checked').value;
+        const teamsPerGroupInput = document.getElementById('teamsPerGroup');
+        const groupCountInput = document.getElementById('groupCount');
+        const hint = document.getElementById('groupCountHint');
+        if (!groupCountInput) return;
+
+        // Hanya Grup → Gugur yang memakai banyak grup dengan batas kapasitas.
+        if (selectedType !== 'group_knockout') {
+            groupCountInput.max = 32;
+            if (hint) hint.classList.add('hidden');
+            return;
+        }
+
+        const capacity = parseInt(teamsPerGroupInput.dataset.capacity) || 64;
+        const teamsPerGroup = parseInt(teamsPerGroupInput.value) || 3;
+        const maxGroupCount = Math.max(2, Math.floor(capacity / teamsPerGroup));
+
+        groupCountInput.max = maxGroupCount;
+
+        // Clamp nilai jika melebihi batas dinamis.
+        let groupCount = parseInt(groupCountInput.value) || 2;
+        if (groupCount > maxGroupCount) {
+            groupCount = maxGroupCount;
+            groupCountInput.value = maxGroupCount;
+        }
+
+        if (hint) {
+            const total = groupCount * teamsPerGroup;
+            hint.textContent = `Maks ${maxGroupCount} grup untuk ${teamsPerGroup} tim/grup — total ${total} tim (batas aman ${capacity})`;
+            hint.classList.remove('hidden');
+        }
+    }
+
     function updateSelectedInfo() {
         const selectedType = document.querySelector('input[name="competition_type"]:checked').value;
         const isLeaguePlayoff = selectedType === 'league_playoff';
@@ -562,6 +610,25 @@
         // Sistem turnamen (gugur murni) tidak butuh ranking lolos/degradasi
         let needQualified = isGroupKnockout || (isLeaguePlayoff && (playoffType === 'promotion' || playoffType === 'both'));
         let needRelegated = selectedType === 'league' || (isLeaguePlayoff && (playoffType === 'relegation' || playoffType === 'both'));
+
+        // Grup → Gugur: total peserta (grup × tim/grup) tidak boleh lewat kapasitas.
+        if (isGroupKnockout) {
+            const teamsPerGroupInput = document.getElementById('teamsPerGroup');
+            const groupCountInput = document.getElementById('groupCount');
+            const capacity = parseInt(teamsPerGroupInput.dataset.capacity) || 64;
+            const teamsPerGroup = parseInt(teamsPerGroupInput.value) || 3;
+            const groupCount = parseInt(groupCountInput.value) || 2;
+            const maxGroupCount = Math.max(2, Math.floor(capacity / teamsPerGroup));
+
+            if (groupCount > maxGroupCount) {
+                e.preventDefault();
+                alert(`❌ Dengan ${teamsPerGroup} tim per grup, jumlah grup maksimal ${maxGroupCount} (batas aman ${capacity} tim)`);
+                groupCountInput.focus();
+                groupCountInput.classList.add('border-red-500');
+                return;
+            }
+            groupCountInput.classList.remove('border-red-500');
+        }
 
         if (needQualified) {
             const qualifiedBoxes = document.querySelectorAll('input[name="qualified_teams[]"]:checked');
@@ -628,6 +695,13 @@
         teamsPerGroupInput.addEventListener('change', function() {
             updateQualifiedTeams();
         });
+    }
+
+    // Event listener untuk perubahan group_count (clamp real-time ke batas kapasitas)
+    const groupCountInput = document.getElementById('groupCount');
+    if (groupCountInput) {
+        groupCountInput.addEventListener('input', updateGroupCountLimit);
+        groupCountInput.addEventListener('change', updateGroupCountLimit);
     }
 
     // Event listener untuk perubahan competition_type

@@ -20,6 +20,19 @@ use Illuminate\Support\Facades\Log;
 
 class TournamentController extends Controller
 {
+    // Kapasitas aman bracket gugur untuk sistem Grup → Gugur: total peserta
+    // fase grup (grup × tim per grup) tidak boleh melebihi angka ini.
+    private const GROUP_KNOCKOUT_TEAM_CAPACITY = 64;
+
+    // Batas maksimal tim per grup untuk sistem Grup → Gugur.
+    private const GROUP_KNOCKOUT_MAX_TEAMS_PER_GROUP = 8;
+
+    // Label kapasitas aman untuk pesan validasi (mis. "64").
+    private function groupKnockoutCapacityLabel(): string
+    {
+        return (string) self::GROUP_KNOCKOUT_TEAM_CAPACITY;
+    }
+
     // List semua turnamen
     public function index()
     {
@@ -364,9 +377,25 @@ class TournamentController extends Controller
     {
         $groupLabels = $this->buildGroupLabels($groupCount);
 
-        $teams = TournamentTeam::where('tournament_id', $tournament->id)
+        $allTeams = TournamentTeam::with('team')
+            ->where('tournament_id', $tournament->id)
             ->orderByRaw('COALESCE(seed, 999999), id')
             ->get();
+
+        // Hanya tim terverifikasi yang menempati grup. Tim pending/rejected
+        // dilepas dari grup (label dikosongkan) agar tidak memakan slot & tidak
+        // muncul di bagan klasemen.
+        [$teams, $nonApproved] = $allTeams->partition(
+            fn ($t) => ($t->team?->verification_status ?? 'pending') === 'approved'
+        );
+
+        foreach ($nonApproved as $team) {
+            if ($team->group_label !== null || $team->group_assigned_manually) {
+                $team->group_label = null;
+                $team->group_assigned_manually = false;
+                $team->save();
+            }
+        }
 
         // R15/R16 — hormati tim yang grup-nya sudah ditetapkan manual / lewat
         // undian. Hanya tim auto yang didistribusikan ulang ke slot tersisa.
@@ -821,7 +850,10 @@ class TournamentController extends Controller
 
         $groupLabels = $this->buildGroupLabels((int) $tournament->groupSetting->group_count);
 
+        // Hanya tim terverifikasi (approved) yang tampil di panel undian. Tim
+        // yang batal/belum verifikasi tidak boleh ikut diplot ke grup.
         $teams = $tournament->tournamentTeams
+            ->filter(fn ($tt) => ($tt->team?->verification_status ?? 'pending') === 'approved')
             ->map(fn ($tt) => [
                 'id' => $tt->id,
                 'name' => $tt->team?->name ?? ('Tim ' . $tt->id),
@@ -854,9 +886,12 @@ class TournamentController extends Controller
         $teamsPerGroup = (int) $tournament->groupSetting->teams_per_group;
         $groupLabels = $this->buildGroupLabels($groupCount);
 
+        // Hanya tim terverifikasi (approved) yang ikut undian. Tim pending/rejected
+        // tidak dihitung agar kapasitas grup tidak salah kelebihan.
         $teams = TournamentTeam::with('team')
             ->where('tournament_id', $tournament->id)
             ->get()
+            ->filter(fn ($t) => ($t->team?->verification_status ?? 'pending') === 'approved')
             ->shuffle()
             ->values();
 
@@ -2278,6 +2313,23 @@ class TournamentController extends Controller
                 ])->withInput();
             }
 
+            // Batas maksimal tim per grup untuk Grup → Gugur.
+            if ($validated['teams_per_group'] > self::GROUP_KNOCKOUT_MAX_TEAMS_PER_GROUP) {
+                return back()->withErrors([
+                    'teams_per_group' => 'Sistem Grup → Gugur maksimal ' . self::GROUP_KNOCKOUT_MAX_TEAMS_PER_GROUP . ' tim per grup'
+                ])->withInput();
+            }
+
+            // Batas aman: total peserta fase grup (grup × tim per grup) tidak
+            // boleh melebihi kapasitas bracket (64 tim). Jumlah grup maksimal
+            // dibulatkan ke bawah, mis. 64 ÷ 5 = 12.8 → 12 grup (60 tim).
+            $maxGroupCount = intdiv(self::GROUP_KNOCKOUT_TEAM_CAPACITY, $validated['teams_per_group']);
+            if ($validated['group_count'] > $maxGroupCount) {
+                return back()->withErrors([
+                    'group_count' => "Dengan {$validated['teams_per_group']} tim per grup, jumlah grup maksimal {$maxGroupCount} (batas aman {$this->groupKnockoutCapacityLabel()} tim)"
+                ])->withInput();
+            }
+
             $validated['relegated_teams'] = [];
         }
 
@@ -3554,6 +3606,35 @@ class TournamentController extends Controller
         return back()->with('success', 'Berkas verifikasi berhasil dihapus.');
     }
 
+    /**
+     * Cek apakah peserta (TournamentTeam) sudah pernah bermain, yakni memiliki
+     * minimal satu pertandingan berstatus full_time sebagai tim tuan rumah/tamu.
+     */
+    private function participantHasPlayedMatch(TournamentTeam $participant): bool
+    {
+        return TournamentMatch::where('tournament_id', $participant->tournament_id)
+            ->where('status', 'full_time')
+            ->where(function ($query) use ($participant) {
+                $query->where('home_team_id', $participant->id)
+                      ->orWhere('away_team_id', $participant->id);
+            })
+            ->exists();
+    }
+
+    /**
+     * Reset hasil undian grup: kosongkan label grup semua peserta dan lepas flag
+     * penetapan manual. Dipakai saat komposisi peserta berubah (mis. tim keluar)
+     * sehingga admin perlu melakukan undian ulang dari kondisi bersih.
+     */
+    private function resetGroupDrawAssignments(Tournament $tournament): void
+    {
+        TournamentTeam::where('tournament_id', $tournament->id)
+            ->update([
+                'group_label' => null,
+                'group_assigned_manually' => false,
+            ]);
+    }
+
     public function verifyParticipant(Request $request, Tournament $tournament, TournamentTeam $participant)
     {
         if ($participant->tournament_id !== $tournament->id) {
@@ -3564,8 +3645,28 @@ class TournamentController extends Controller
             'status' => 'required|in:pending,approved,rejected',
         ]);
 
-        $participant->team->verification_status = $validated['status'];
+        $previousStatus = $participant->team->verification_status ?? 'pending';
+        $newStatus = $validated['status'];
+
+        // Pembatalan verifikasi = keluar dari daftar tim aktif turnamen.
+        $isCancellation = $previousStatus === 'approved' && $newStatus !== 'approved';
+
+        // Guard: tim yang sudah pernah bermain (punya match full_time) tidak boleh
+        // dibatalkan — mencegah hasil pertandingan & klasemen ikut terhapus saat
+        // match diregenerasi. Hasil pertandingannya harus dianulir dulu.
+        if ($isCancellation && $this->participantHasPlayedMatch($participant)) {
+            return back()->with('error', "{$participant->team->name} sudah bermain, verifikasi tidak dapat dibatalkan. Anulir dulu hasil pertandingannya jika ingin mengeluarkan tim ini.");
+        }
+
+        $participant->team->verification_status = $newStatus;
         $participant->team->save();
+
+        // Saat tim keluar (belum ada yang main), hasil drawing grup & bagan gugur
+        // di-reset agar tidak menyisakan slot/tim yang sudah tak berlaku. Match
+        // akan diregenerasi bersih tanpa tim ini oleh generateForTournament().
+        if ($isCancellation) {
+            $this->resetGroupDrawAssignments($tournament);
+        }
 
         app(MatchGenerator::class)->generateForTournament($tournament);
 
@@ -3573,9 +3674,14 @@ class TournamentController extends Controller
             'pending' => 'pending',
             'approved' => 'terverifikasi',
             'rejected' => 'ditolak',
-        ][$validated['status']];
+        ][$newStatus];
 
-        return back()->with('success', "Status verifikasi {$participant->team->name} diubah menjadi {$statusText}.");
+        $message = "Status verifikasi {$participant->team->name} diubah menjadi {$statusText}.";
+        if ($isCancellation) {
+            $message .= ' Hasil undian grup & bagan direset — silakan lakukan undian ulang.';
+        }
+
+        return back()->with('success', $message);
     }
 
     public function standings(Tournament $tournament)

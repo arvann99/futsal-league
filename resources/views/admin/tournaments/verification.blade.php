@@ -14,6 +14,12 @@
             </div>
         @endif
 
+        @if(session('error'))
+            <div class="mb-6 rounded-xl bg-rose-900/20 border border-rose-500/30 p-4 text-rose-200">
+                {{ session('error') }}
+            </div>
+        @endif
+
         @if($errors->any())
             <div class="mb-6 rounded-xl bg-rose-900/20 border border-rose-500/30 p-4 text-rose-200">
                 <ul class="list-disc list-inside">
