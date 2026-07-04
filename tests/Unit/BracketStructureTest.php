@@ -41,18 +41,25 @@ class BracketStructureTest extends TestCase
     }
 
     /**
-     * Single-elimination dengan N tim SELALU menghasilkan tepat N-1 match.
-     * Ini menangkap match yang hilang, ganda, atau tim yang tak pernah main.
+     * Single-elimination dengan ronde pertama PENUH menghasilkan tepat
+     * (slotCount − 1) card, di mana slotCount = pangkat 2 terkecil ≥ N. Card bye
+     * (tim vs Bye) ikut dihitung karena kini ditampilkan, bukan di-skip. Ini
+     * menangkap card yang hilang, ganda, atau tim yang tak pernah tampil.
      */
     #[DataProvider('teamCountProvider')]
-    public function test_total_match_count_is_teams_minus_one(int $n): void
+    public function test_total_match_count_is_slotcount_minus_one(int $n): void
     {
         $structure = (new MatchGenerator)->buildBracketStructure($this->teams($n));
 
+        $slotCount = 1;
+        while ($slotCount < $n) {
+            $slotCount *= 2;
+        }
+
         $this->assertCount(
-            $n - 1,
+            $slotCount - 1,
             $structure,
-            "Bagan {$n} tim harus punya tepat " . ($n - 1) . ' match.'
+            "Bagan {$n} tim (slot {$slotCount}) harus punya tepat " . ($slotCount - 1) . ' card.'
         );
     }
 
@@ -118,10 +125,10 @@ class BracketStructureTest extends TestCase
     }
 
     /**
-     * Ronde kedua (ronde utama, mis. Quarterfinal untuk bracket 16) harus PENUH:
-     * jumlah match ronde utama = slotCount/4, dan seluruh tim bye + pemenang
-     * ronde pertama mengisinya tanpa card gantung. Untuk 9 tim: Quarterfinal
-     * harus berisi 4 match penuh (bukan timpang).
+     * Ronde pertama PENUH (slotCount/2 card) berisi seluruh bye + play-in tanpa
+     * card gantung: tepat (slotCount − n) card bye (tim vs Bye) dan (n − slotCount/2)
+     * card play-in (tim vs tim). Untuk 9 tim: Round of 16 berisi 8 card (7 bye +
+     * 1 play-in), sehingga Quarterfinal penuh 4 match.
      */
     #[DataProvider('teamCountProvider')]
     public function test_first_round_holds_all_byes(int $n): void
@@ -134,13 +141,13 @@ class BracketStructureTest extends TestCase
             $slotCount *= 2;
         }
 
-        // Jumlah play-in match (ronde pertama) yang benar = n - slotCount/2.
-        $expectedPlayIn = $n - intdiv($slotCount, 2);
+        $expectedFirstRound = intdiv($slotCount, 2);   // ronde pertama penuh
+        $expectedByes = $slotCount - $n;               // card (tim vs Bye)
+        $expectedPlayIn = $n - intdiv($slotCount, 2);  // card (tim vs tim)
 
         $roundOrder = ['Round of 32', 'Round of 16', 'Quarterfinal', 'Semifinal', 'Final'];
         $byRound = $this->byRound($structure);
 
-        // Ronde main paling awal.
         $firstRound = null;
         foreach ($roundOrder as $round) {
             if (! empty($byRound[$round])) {
@@ -149,58 +156,72 @@ class BracketStructureTest extends TestCase
             }
         }
 
-        if ($expectedPlayIn <= 0) {
-            // Tidak perlu ronde play-in (n == slotCount/2, mis. tak terjadi untuk
-            // daftar ini) — lewati.
-            $this->assertTrue(true);
-
-            return;
-        }
-
-        // Ronde pertama harus berisi TEPAT jumlah play-in yang dihitung, dan
-        // setiap match ronde pertama mempertemukan dua tim nyata (tim vs tim).
         $this->assertCount(
-            $expectedPlayIn,
+            $expectedFirstRound,
             $byRound[$firstRound] ?? [],
-            "Ronde pertama ({$firstRound}) untuk {$n} tim harus berisi {$expectedPlayIn} play-in match."
+            "Ronde pertama ({$firstRound}) untuk {$n} tim harus penuh: {$expectedFirstRound} card."
         );
 
+        $byes = 0;
+        $playIns = 0;
         foreach ($byRound[$firstRound] as $match) {
-            $this->assertContains($match['left'], $teamNames, 'Peserta kiri play-in harus tim nyata.');
-            $this->assertContains($match['right'], $teamNames, 'Peserta kanan play-in harus tim nyata.');
+            if (! empty($match['is_bye'])) {
+                $byes++;
+                $this->assertContains($match['left'], $teamNames, 'Sisi kiri card bye harus tim nyata.');
+                $this->assertSame('Bye', $match['right'], 'Sisi kanan card bye harus "Bye".');
+            } else {
+                $playIns++;
+                $this->assertContains($match['left'], $teamNames, 'Peserta kiri play-in harus tim nyata.');
+                $this->assertContains($match['right'], $teamNames, 'Peserta kanan play-in harus tim nyata.');
+            }
         }
+
+        $this->assertSame($expectedByes, $byes, "Jumlah card bye {$n} tim harus {$expectedByes}.");
+        $this->assertSame($expectedPlayIn, $playIns, "Jumlah card play-in {$n} tim harus {$expectedPlayIn}.");
     }
 
     /**
-     * Snapshot struktur untuk 9 tim — kasus yang dilaporkan client.
-     * Verifikasi eksplisit: 1 play-in di Round of 16, Quarterfinal penuh (4),
-     * Semifinal (2), Final (1); total 8 match; dan seed teratas (Tim1) hanya
-     * bye SATU ronde (muncul di Quarterfinal, bukan melompat ke Semifinal).
+     * Snapshot struktur untuk 9 tim — kasus yang dilaporkan client. Ronde pertama
+     * PENUH: Round of 16 = 8 card (7 bye + 1 play-in), Quarterfinal (4),
+     * Semifinal (2), Final (1); total 15 card. Seed teratas (Tim1) dapat card
+     * bye di Round of 16 lalu melaju ke Quarterfinal (bye satu ronde saja).
      */
     public function test_nine_teams_bracket_shape(): void
     {
         $structure = (new MatchGenerator)->buildBracketStructure($this->teams(9));
         $byRound = $this->byRound($structure);
 
-        $this->assertCount(8, $structure);
-        $this->assertCount(1, $byRound['Round of 16'] ?? []);
+        $this->assertCount(15, $structure);
+        $this->assertCount(8, $byRound['Round of 16'] ?? []);
         $this->assertCount(4, $byRound['Quarterfinal'] ?? []);
         $this->assertCount(2, $byRound['Semifinal'] ?? []);
         $this->assertCount(1, $byRound['Final'] ?? []);
 
-        // Tim1 (seed teratas) bye satu ronde → muncul di Quarterfinal.
+        // Tim1 (seed teratas) dapat card bye di Round of 16, lalu melaju ke QF.
         $tim1Rounds = [];
         foreach ($structure as $match) {
             if ($match['left'] === 'Tim1' || $match['right'] === 'Tim1') {
                 $tim1Rounds[] = $match['round'];
             }
         }
-        $this->assertSame(['Quarterfinal'], $tim1Rounds, 'Tim1 harus main pertama kali di Quarterfinal (bye satu ronde saja).');
+        $this->assertSame(['Round of 16', 'Quarterfinal'], $tim1Rounds, 'Tim1 dapat card bye (R16) lalu melaju ke Quarterfinal.');
 
-        // Ronde pertama: tepat satu play-in tim-vs-tim.
-        $r16 = $byRound['Round of 16'][0];
-        $this->assertNotSame('Bye', $r16['left']);
-        $this->assertNotSame('Bye', $r16['right']);
+        // Card bye Tim1: (Tim1 vs Bye), ber-flag is_bye.
+        $tim1Bye = null;
+        foreach ($byRound['Round of 16'] as $match) {
+            if ($match['left'] === 'Tim1') {
+                $tim1Bye = $match;
+                break;
+            }
+        }
+        $this->assertNotNull($tim1Bye, 'Tim1 harus punya card bye di Round of 16.');
+        $this->assertTrue((bool) $tim1Bye['is_bye']);
+        $this->assertSame('Bye', $tim1Bye['right']);
+
+        // Tepat satu card play-in tim-vs-tim di Round of 16.
+        $playIns = array_filter($byRound['Round of 16'], fn ($m) => empty($m['is_bye']));
+        $this->assertCount(1, $playIns);
+        $r16 = array_values($playIns)[0];
         $this->assertStringStartsWith('Tim', $r16['left']);
         $this->assertStringStartsWith('Tim', $r16['right']);
     }

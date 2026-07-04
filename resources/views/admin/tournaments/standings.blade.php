@@ -69,14 +69,11 @@
                         $groupGridCols = ($setting->group_count ?? 0) <= 1 ? 'grid-cols-1' : 'grid-cols-1 lg:grid-cols-2';
                     @endphp
                     <div class="grid {{ $groupGridCols }} gap-6">
-                        @php
-                            $groupLetters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
-                        @endphp
-                        @for($i = 1; $i <= $setting->group_count; $i++)
-                            @php
-                                $groupName = $groupLetters[$i - 1] ?? $i;
-                                $teams = $groups[$groupName] ?? [];
-                            @endphp
+                        {{-- Iterasi langsung atas $groups (label A..Z, lalu AA.. — sudah
+                             benar & terurut dari controller). Membangun ulang label dari
+                             indeks dengan array huruf A..H dulu memutus di grup ke-9:
+                             grup 'I' tak dapat slot → tampil "Grup 9" kosong. --}}
+                        @foreach($groups as $groupName => $teams)
                             <div class="bg-slate-900 rounded-xl border border-slate-800 overflow-hidden">
                                 <!-- Group Header -->
                                 <div class="bg-gradient-to-r from-indigo-600 to-purple-600 px-6 py-4 flex items-center justify-between">
@@ -227,7 +224,7 @@
                                 @endif
                             </div>
                         </div>
-                    @endfor
+                        @endforeach
                 </div>
                 @else
                     <div class="rounded-[2rem] border border-slate-800 bg-slate-950/95 p-12 text-center">

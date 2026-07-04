@@ -28,6 +28,31 @@ class TournamentGroupSetting extends Model
     }
 
     /**
+     * Daftar label grup untuk $count grup: A..Z, lalu AA, AB, ... Sumber tunggal
+     * agar penamaan grup konsisten di seluruh aplikasi (klasemen, penempatan
+     * peserta, seeding bracket). Array huruf statis A..H dulu memutus di grup
+     * ke-9 sehingga grup 'I' hilang dan timnya tercecer.
+     */
+    public static function groupLabels(int $count): array
+    {
+        $labels = [];
+        $base = range('A', 'Z');
+
+        for ($i = 0; $i < max(0, $count); $i++) {
+            if ($i < count($base)) {
+                $labels[] = $base[$i];
+                continue;
+            }
+
+            $first = $base[intdiv($i, count($base)) - 1] ?? 'A';
+            $second = $base[$i % count($base)];
+            $labels[] = $first . $second;
+        }
+
+        return $labels;
+    }
+
+    /**
      * Cek apakah team ranking tertentu lolos
      */
     public function isQualified($teamRanking)

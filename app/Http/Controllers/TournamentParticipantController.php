@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Team;
 use App\Models\Tournament;
+use App\Models\TournamentGroupSetting;
 use App\Models\TournamentTeam;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -40,8 +41,7 @@ class TournamentParticipantController extends Controller
 
         $groupLabels = [];
         if ($usesGroups) {
-            $letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
-            $groupLabels = array_slice($letters, 0, (int) $tournament->groupSetting->group_count);
+            $groupLabels = TournamentGroupSetting::groupLabels((int) $tournament->groupSetting->group_count);
         }
 
         // N1 — tentukan apakah slot pendaftaran sudah penuh agar tombol
@@ -268,8 +268,7 @@ class TournamentParticipantController extends Controller
             return back()->with('error', 'Turnamen ini tidak memakai grup, penempatan grup tidak tersedia.');
         }
 
-        $letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
-        $validGroups = array_slice($letters, 0, (int) $tournament->groupSetting->group_count);
+        $validGroups = TournamentGroupSetting::groupLabels((int) $tournament->groupSetting->group_count);
 
         $validated = $request->validate([
             'group_label' => ['nullable', 'string', 'in:' . implode(',', $validGroups)],
@@ -319,8 +318,7 @@ class TournamentParticipantController extends Controller
             return null;
         }
 
-        $groupLetters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
-        $totalGroups = min($setting->group_count, count($groupLetters));
+        $groupLabels = TournamentGroupSetting::groupLabels((int) $setting->group_count);
 
         $counts = TournamentTeam::where('tournament_id', $tournament->id)
             ->whereNotNull('group_label')
@@ -329,15 +327,14 @@ class TournamentParticipantController extends Controller
             ->pluck('total', 'group_label')
             ->toArray();
 
-        for ($i = 0; $i < $totalGroups; $i++) {
-            $label = $groupLetters[$i];
+        foreach ($groupLabels as $label) {
             $currentCount = $counts[$label] ?? 0;
             if ($currentCount < $setting->teams_per_group) {
                 return $label;
             }
         }
 
-        return $groupLetters[0] ?? 'A';
+        return $groupLabels[0] ?? 'A';
     }
 
     

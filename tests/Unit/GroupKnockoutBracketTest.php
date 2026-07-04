@@ -73,28 +73,41 @@ class GroupKnockoutBracketTest extends TestCase
     }
 
     /**
-     * Tidak boleh ada slot "Bye" sama sekali: bye dikumpulkan di ronde pertama
-     * dan pasangan (tim, Bye) tidak menghasilkan card — tim langsung naik.
-     * Regresi utama: dulu muncul match "Bye vs Bye" dan "(tim) vs Bye".
+     * "Bye" hanya boleh muncul sebagai slot KANAN pada card ronde pertama yang
+     * ber-flag is_bye (tim vs Bye) — tim itu otomatis lolos. Tidak boleh ada
+     * "Bye vs Bye", tidak boleh "Bye" di ronde mana pun setelah ronde pertama.
      */
     #[DataProvider('configProvider')]
-    public function test_no_bye_slot_appears_anywhere(int $groupCount, array $ranks): void
+    public function test_bye_only_as_first_round_card(int $groupCount, array $ranks): void
     {
-        foreach ($this->structure($groupCount, $ranks) as $match) {
-            $this->assertNotSame('Bye', $match['left'], "Match {$match['id']} punya slot kiri Bye ({$groupCount} grup).");
-            $this->assertNotSame('Bye', $match['right'], "Match {$match['id']} punya slot kanan Bye ({$groupCount} grup).");
+        $structure = $this->structure($groupCount, $ranks);
+        $firstRoundLabel = array_key_first($this->rounds($structure));
+
+        foreach ($structure as $match) {
+            $this->assertNotSame('Bye', $match['left'], "Match {$match['id']}: sisi kiri tak boleh Bye (tim selalu di kiri).");
+
+            if ($match['right'] === 'Bye') {
+                $this->assertTrue((bool) ($match['is_bye'] ?? false), "Match {$match['id']}: slot Bye harus pada card is_bye.");
+                $this->assertSame($firstRoundLabel, $match['round'], "Match {$match['id']}: card bye hanya di ronde pertama.");
+                $this->assertMatchesRegularExpression('/^[A-P]\d+$/', (string) $match['left'], "Match {$match['id']}: card bye harus (posisi grup vs Bye).");
+            }
         }
     }
 
     /**
-     * Setiap posisi grup muncul TEPAT satu kali di seluruh bagan (tidak hilang,
-     * tidak ganda), dan tidak ada posisi asing.
+     * Setiap posisi grup muncul TEPAT satu kali di RONDE PERTAMA (baik di card
+     * main maupun card bye) — tidak hilang, tidak ganda, tak ada posisi asing.
+     * Kemunculan di ronde berikutnya adalah propagasi (tim bye melaju), bukan
+     * penempatan awal, jadi tak dihitung di sini.
      */
     #[DataProvider('configProvider')]
     public function test_every_position_appears_exactly_once(int $groupCount, array $ranks): void
     {
         $expected = $this->expectedPositions($groupCount, $ranks);
-        $actual = $this->positionSlots($this->structure($groupCount, $ranks));
+        $structure = $this->structure($groupCount, $ranks);
+        $firstRoundLabel = array_key_first($this->rounds($structure));
+        $firstRound = array_filter($structure, fn ($m) => $m['round'] === $firstRoundLabel);
+        $actual = $this->positionSlots(array_values($firstRound));
 
         sort($expected);
         sort($actual);
@@ -116,25 +129,21 @@ class GroupKnockoutBracketTest extends TestCase
 
         $rankOf = fn (string $position) => (int) substr($position, 1);
 
-        // Posisi yang bermain di ronde pertama (play-in).
+        // Ronde pertama kini penuh: card is_bye = penerima bye (tim di kiri),
+        // card non-bye = dua tim yang bermain (play-in).
         $playRanks = [];
-        foreach ($rounds[$firstRoundLabel] as $match) {
-            foreach (['left', 'right'] as $side) {
-                if (preg_match('/^[A-P]\d+$/', (string) $match[$side])) {
-                    $playRanks[] = $rankOf($match[$side]);
-                }
-            }
-        }
-
-        // Posisi penerima bye = muncul pertama kali di ronde SETELAH play-in.
         $byeRanks = [];
-        foreach ($structure as $match) {
-            if ($match['round'] === $firstRoundLabel) {
+        foreach ($rounds[$firstRoundLabel] as $match) {
+            if (! empty($match['is_bye'])) {
+                if (preg_match('/^[A-P]\d+$/', (string) $match['left'])) {
+                    $byeRanks[] = $rankOf($match['left']);
+                }
+
                 continue;
             }
             foreach (['left', 'right'] as $side) {
                 if (preg_match('/^[A-P]\d+$/', (string) $match[$side])) {
-                    $byeRanks[] = $rankOf($match[$side]);
+                    $playRanks[] = $rankOf($match[$side]);
                 }
             }
         }
@@ -202,9 +211,10 @@ class GroupKnockoutBracketTest extends TestCase
     }
 
     /**
-     * Konfigurasi persis keluhan client: 3 grup × 3 lolos = 9 tim. Play-in
-     * tunggal antara dua tim peringkat 3 beda grup; delapan tim lain langsung
-     * ke Quarterfinal; tepat satu slot Quarterfinal menunggu pemenang play-in.
+     * Konfigurasi persis keluhan client: 3 grup × 3 lolos = 9 tim. Ronde pertama
+     * PENUH (8 card, padding ke 16 slot): satu card play-in dua tim peringkat 3
+     * beda grup, tujuh card bye (tim vs Bye). Setiap slot Quarterfinal terisi
+     * (pemenang play-in atau tim bye) — bagan simetris tanpa card menggantung.
      */
     public function test_three_groups_three_qualifiers_shape(): void
     {
@@ -215,23 +225,30 @@ class GroupKnockoutBracketTest extends TestCase
             ['Round of 16', 'Quarterfinal', 'Semifinal', 'Final'],
             array_keys($rounds)
         );
-        $this->assertCount(1, $rounds['Round of 16'], 'Harus tepat satu match play-in.');
+        $this->assertCount(8, $rounds['Round of 16'], 'Ronde pertama penuh: 8 card (1 play-in + 7 bye).');
         $this->assertCount(4, $rounds['Quarterfinal']);
         $this->assertCount(2, $rounds['Semifinal']);
         $this->assertCount(1, $rounds['Final']);
 
+        $byeCards = array_filter($rounds['Round of 16'], fn ($m) => ! empty($m['is_bye']));
+        $playCards = array_filter($rounds['Round of 16'], fn ($m) => empty($m['is_bye']));
+        $this->assertCount(7, $byeCards, 'Tujuh card bye untuk 9 tim (16 slot − 9 tim = 7 bye).');
+        $this->assertCount(1, $playCards, 'Satu card play-in.');
+
         // Play-in: dua tim peringkat 3 dari grup berbeda.
-        $playIn = $rounds['Round of 16'][0];
+        $playIn = array_values($playCards)[0];
         $this->assertMatchesRegularExpression('/^[A-C]3$/', $playIn['left']);
         $this->assertMatchesRegularExpression('/^[A-C]3$/', $playIn['right']);
 
-        // Tepat satu slot Quarterfinal menunggu pemenang play-in.
+        // Tepat satu slot Quarterfinal menunggu pemenang play-in; slot QF lain
+        // terisi tim bye yang melaju langsung (tak ada slot kosong/Bye).
         $winnerSlots = 0;
         foreach ($rounds['Quarterfinal'] as $match) {
             foreach (['left', 'right'] as $side) {
                 if ($match[$side] === 'Pemenang M' . $playIn['id']) {
                     $winnerSlots++;
                 }
+                $this->assertNotSame('Bye', $match[$side], "Quarterfinal {$match['id']} tak boleh punya slot Bye.");
             }
         }
         $this->assertSame(1, $winnerSlots);

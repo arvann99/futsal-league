@@ -117,27 +117,25 @@ class BracketMirrorLayoutTest extends TestCase
 
     /**
      * 9 tim: ronde play-in (Round of 16) hanya 1 match → seluruhnya di KIRI.
-     * Sisi kanan harus punya kolom Round of 16 KOSONG (spacer) agar Quarterfinal
-     * kiri & kanan sejajar. Ini inti regresi konektor menggantung.
+     * Ronde pertama kini PENUH (card bye ditampilkan), jadi 9 tim → Round of 16
+     * berisi 8 card yang terbelah rata 4 kiri + 4 kanan — tiap ronde muncul di
+     * KEDUA sisi dan sejajar, tak ada lagi kolom spacer kosong / konektor
+     * menggantung.
      */
-    public function test_nine_teams_right_side_has_empty_playin_spacer(): void
+    public function test_nine_teams_both_sides_symmetric(): void
     {
         $mirror = MatchGenerator::splitBracketColumnsMirror($this->columns(9));
 
         $this->assertTrue($mirror['enabled'], 'Bracket 9 tim harus di-mirror.');
 
-        // Sisi kanan ter-reverse (index 0 = mendekati final). Kolom terluar
-        // kanan = elemen terakhir = ronde play-in, harus KOSONG.
-        $outermostRight = end($mirror['right']);
-        $this->assertSame(
-            [],
-            $outermostRight['matches'],
-            'Kolom terluar sisi kanan (play-in) harus kosong sebagai spacer penyejajar.'
-        );
+        // Tak ada kolom kosong: setiap kolom kedua sisi berisi match.
+        foreach (['left', 'right'] as $side) {
+            foreach ($mirror[$side] as $col) {
+                $this->assertNotSame([], $col['matches'], "Kolom {$col['label']} sisi {$side} tak boleh kosong (ronde pertama penuh).");
+            }
+        }
 
         // Verifikasi tops simetris PER RONDE yang sama-sama ada di kedua sisi.
-        // (Ronde play-in hanya di kiri — wajar untuk bracket ganjil; yang
-        // penting Quarterfinal & Semifinal SEJAJAR agar konektor tak melenceng.)
         $tops = MatchGenerator::computeMirrorCardTops($mirror, 240, 120, 0);
 
         // Petakan label ronde → tops, untuk tiap sisi.
@@ -171,63 +169,101 @@ class BracketMirrorLayoutTest extends TestCase
         }
 
         // Final tepat di tengah antara Semifinal kiri & kanan.
-        $this->assertSame(120.0, (float) $tops['final'], 'Final harus di tengah kedua Semifinal.');
         $this->assertArrayHasKey('Semifinal', $leftByLabel);
-        $this->assertSame([120.0], $leftByLabel['Semifinal']);
+        $this->assertArrayHasKey('Semifinal', $rightByLabel);
+        $expectedFinal = (
+            array_sum($leftByLabel['Semifinal']) / count($leftByLabel['Semifinal'])
+            + array_sum($rightByLabel['Semifinal']) / count($rightByLabel['Semifinal'])
+        ) / 2;
+        $this->assertSame($expectedFinal, (float) $tops['final'], 'Final harus di tengah kedua Semifinal.');
     }
 
     /**
-     * 12 tim: tiap match Quarterfinal punya SATU pengumpan dari Round of 16
-     * (slot satunya diisi tim bye). Match pengumpan tunggal harus SEJAJAR
-     * (top sama) dengan match tujuannya — regresi "zigzag" kolom terluar
-     * akibat pemasangan posisi (i*2, i*2+1) yang mengira selalu ada dua
-     * pengumpan.
+     * Ronde pertama kini ditampilkan PENUH (card bye), sehingga SETIAP card
+     * ronde-dalam (bukan ronde pertama) punya TEPAT DUA pengumpan — inilah yang
+     * membuat bagan simetris & jarak antar-card seragam (rapi). Regresi utama
+     * kerapian: dulu card bye di-skip → sebagian QF/SF cuma 1 pengumpan → siku
+     * konektor panjang tak simetris.
      */
-    #[DataProvider('singleFeederTeamCountProvider')]
-    public function test_single_feeder_match_aligns_with_its_target(int $n): void
+    #[DataProvider('teamCountProvider')]
+    public function test_inner_round_matches_have_two_feeders(int $n): void
     {
         $mirror = MatchGenerator::splitBracketColumnsMirror($this->columns($n));
         $this->assertTrue($mirror['enabled'], "Bracket {$n} tim harus di-mirror.");
 
-        $tops = MatchGenerator::computeMirrorCardTops($mirror, 240, 120, 0);
-
-        // Petakan id match → top & daftar pengumpan per target, di kedua sisi.
-        $topById = [];
+        // Kumpulkan feeder per target dari SELURUH bagan (kolom penuh + final).
+        $columns = $this->columns($n);
         $feedersByTarget = [];
-        foreach (['left', 'right'] as $side) {
-            foreach ($mirror[$side] as $ci => $col) {
-                foreach (array_values($col['matches']) as $i => $m) {
-                    $topById[$m['id']] = (float) $tops[$side][$ci][$i];
-                    if ($m['next_match_id'] !== null) {
-                        $feedersByTarget[$m['next_match_id']][] = $m['id'];
-                    }
+        $firstRoundLabel = $columns[0]['label'];
+        $roundOf = [];
+        foreach ($columns as $col) {
+            foreach ($col['matches'] as $m) {
+                $roundOf[$m['id']] = $col['label'];
+                if (($m['next_match_id'] ?? null) !== null) {
+                    $feedersByTarget[$m['next_match_id']][] = $m['id'];
                 }
             }
         }
 
-        $checked = 0;
         foreach ($feedersByTarget as $targetId => $feederIds) {
-            if (count($feederIds) !== 1 || ! isset($topById[$targetId])) {
-                continue; // hanya target berpengumpan tunggal di sisi yang sama
-            }
-            $this->assertSame(
-                $topById[$targetId],
-                $topById[$feederIds[0]],
-                "Match {$feederIds[0]} (pengumpan tunggal) harus sejajar dengan match {$targetId} ({$n} tim)."
+            // Target selalu di ronde-dalam (ronde pertama tak pernah jadi target).
+            $this->assertCount(
+                2,
+                $feederIds,
+                "Match {$targetId} ({$roundOf[$targetId]}) harus punya tepat 2 pengumpan ({$n} tim)."
             );
-            $checked++;
         }
-
-        $this->assertGreaterThan(0, $checked, "Bracket {$n} tim harus punya match berpengumpan tunggal.");
     }
 
-    public static function singleFeederTeamCountProvider(): array
+    /**
+     * Regresi garis konektor melenceng (laporan 21/40/45/44/... tim): SETIAP
+     * kartu yang punya pengumpan harus berada tepat di TENGAH (mid) para
+     * pengumpannya di sisi yang sama, agar semua garis lurus/simetris. Dulu
+     * kartu ber-pengumpan-tunggal yang berderet setelah kartu tanpa-pengumpan
+     * "terdorong" kursor sejauh satu rowUnit dari pengumpannya.
+     *
+     * Diuji lintas seluruh N 2..40 (bracket tim langsung) sekaligus — pipeline
+     * layout yang sama dipakai Grup → Gugur.
+     */
+    public function test_every_fed_match_is_centered_on_its_feeders(): void
     {
-        return [
-            '9 tim' => [9],
-            '10 tim' => [10],
-            '12 tim' => [12],
-        ];
+        $rowUnit = 240.0;
+
+        for ($n = 4; $n <= 40; $n++) {
+            $mirror = MatchGenerator::splitBracketColumnsMirror($this->columns($n));
+            if (! $mirror['enabled']) {
+                continue; // N=3 dsb. fallback satu-arah, di luar cakupan test ini
+            }
+
+            $tops = MatchGenerator::computeMirrorCardTops($mirror, $rowUnit, 120, 0);
+
+            $topById = [];
+            $feedersByTarget = [];
+            foreach (['left', 'right'] as $side) {
+                foreach ($mirror[$side] as $ci => $col) {
+                    foreach (array_values($col['matches']) as $i => $m) {
+                        $topById[$m['id']] = (float) $tops[$side][$ci][$i];
+                        if ($m['next_match_id'] !== null) {
+                            $feedersByTarget[$m['next_match_id']][] = $m['id'];
+                        }
+                    }
+                }
+            }
+
+            foreach ($feedersByTarget as $targetId => $feederIds) {
+                if (! isset($topById[$targetId])) {
+                    continue; // target di sisi seberang (final) — dicek terpisah
+                }
+                $feederTops = array_map(fn ($id) => $topById[$id], $feederIds);
+                $expected = (min($feederTops) + max($feederTops)) / 2;
+                $this->assertEqualsWithDelta(
+                    $expected,
+                    $topById[$targetId],
+                    0.5,
+                    "Match {$targetId} harus di tengah pengumpannya (" . implode(',', $feederIds) . ") pada {$n} tim."
+                );
+            }
+        }
     }
 
     public static function teamCountProvider(): array
@@ -239,7 +275,12 @@ class BracketMirrorLayoutTest extends TestCase
             '9 tim' => [9],
             '10 tim' => [10],
             '11 tim' => [11],
+            '12 tim' => [12],
+            '15 tim' => [15],
             '16 tim' => [16],
+            '21 tim' => [21],
+            '40 tim' => [40],
+            '45 tim' => [45],
         ];
     }
 }

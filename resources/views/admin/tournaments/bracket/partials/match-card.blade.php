@@ -23,8 +23,14 @@
     $rightRaw = data_get($assigned, 'awayTeam.team.name') ?: data_get($assigned, 'source_away') ?: data_get($match, 'right') ?: 'Winner-up M2';
     $leftIsPlaceholder = preg_match('/(Winner|Loser|Runner[- ]?up|^[A-Z]\\d|Bye)/i', (string)$leftRaw);
     $rightIsPlaceholder = preg_match('/(Winner|Loser|Runner[- ]?up|^[A-Z]\\d|Bye)/i', (string)$rightRaw);
-    $leftDisplay = isset($assigned->home_team_id) ? $leftRaw : ($leftIsPlaceholder ? 'Menunggu...' : $leftRaw);
-    $rightDisplay = isset($assigned->away_team_id) ? $rightRaw : ($rightIsPlaceholder ? 'Menunggu...' : $rightRaw);
+    // Slot "Bye" (lawan tim yang otomatis lolos) ditampilkan "BYE" (kapital) dan
+    // digayakan berbeda (redup + italic + tracking lebar) agar jelas ini penanda
+    // bye, bukan nama tim — kartu bye memang tak akan pernah diisi lawan.
+    $leftIsBye = strcasecmp((string)$leftRaw, 'Bye') === 0;
+    $rightIsBye = strcasecmp((string)$rightRaw, 'Bye') === 0;
+    $leftDisplay = $leftIsBye ? 'BYE' : (isset($assigned->home_team_id) ? $leftRaw : ($leftIsPlaceholder ? 'Menunggu...' : $leftRaw));
+    $rightDisplay = $rightIsBye ? 'BYE' : (isset($assigned->away_team_id) ? $rightRaw : ($rightIsPlaceholder ? 'Menunggu...' : $rightRaw));
+    $byeTextClass = 'italic tracking-[0.2em] text-slate-500';
 
     // Ringkasan skor kartu (single / 2-leg / penalti). '-' bila belum main.
     $score = $bracketScores[$match['id']] ?? null;
@@ -51,7 +57,7 @@
                         <div class="flex items-center justify-between gap-2">
                         @if($leftEditable)
                             <div class="auto-select min-w-0 flex-1">
-                                <p class="text-sm truncate {{ $homeIsWinner ? 'text-emerald-300 font-semibold' : 'text-slate-200' }}" title="{{ $leftDisplay }}">{{ $leftDisplay }}</p>
+                                <p class="text-sm truncate {{ $leftIsBye ? $byeTextClass : ($homeIsWinner ? 'text-emerald-300 font-semibold' : 'text-slate-200') }}" title="{{ $leftDisplay }}">{{ $leftDisplay }}</p>
                                 <input type="hidden" name="matches[{{ $match['index'] }}][left]" value="{{ $leftSlot }}">
                                 <input type="hidden" name="matches[{{ $match['index'] }}][left_id]" value="{{ optional($assigned)->home_team_id ?? '' }}">
                             </div>
@@ -67,7 +73,7 @@
                                 </select>
                             </div>
                         @else
-                            <p class="min-w-0 flex-1 truncate text-sm text-slate-200" title="{{ $leftDisplay }}">{{ $leftDisplay }}</p>
+                            <p class="min-w-0 flex-1 truncate text-sm {{ $leftIsBye ? $byeTextClass : 'text-slate-200' }}" title="{{ $leftDisplay }}">{{ $leftDisplay }}</p>
                             <input type="hidden" name="matches[{{ $match['index'] }}][left]" value="{{ $leftSlot }}">
                             <input type="hidden" name="matches[{{ $match['index'] }}][left_id]" value="">
                         @endif
@@ -83,7 +89,7 @@
                 <div class="flex items-center justify-between gap-2">
                 @if($rightEditable)
                     <div class="auto-select min-w-0 flex-1">
-                        <p class="text-sm truncate {{ $awayIsWinner ? 'text-emerald-300 font-semibold' : 'text-slate-200' }}" title="{{ $rightDisplay }}">{{ $rightDisplay }}</p>
+                        <p class="text-sm truncate {{ $rightIsBye ? $byeTextClass : ($awayIsWinner ? 'text-emerald-300 font-semibold' : 'text-slate-200') }}" title="{{ $rightDisplay }}">{{ $rightDisplay }}</p>
                         <input type="hidden" name="matches[{{ $match['index'] }}][right]" value="{{ $rightSlot }}">
                         <input type="hidden" name="matches[{{ $match['index'] }}][right_id]" value="{{ optional($assigned)->away_team_id ?? '' }}">
                     </div>
@@ -99,7 +105,7 @@
                         </select>
                     </div>
                 @else
-                    <p class="min-w-0 flex-1 truncate text-sm text-slate-200" title="{{ $rightDisplay }}">{{ $rightDisplay }}</p>
+                    <p class="min-w-0 flex-1 truncate text-sm {{ $rightIsBye ? $byeTextClass : 'text-slate-200' }}" title="{{ $rightDisplay }}">{{ $rightDisplay }}</p>
                     <input type="hidden" name="matches[{{ $match['index'] }}][right]" value="{{ $rightSlot }}">
                     <input type="hidden" name="matches[{{ $match['index'] }}][right_id]" value="">
                 @endif

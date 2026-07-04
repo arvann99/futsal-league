@@ -19,8 +19,14 @@
     $rightRaw = data_get($assigned, 'awayTeam.team.name') ?: data_get($assigned, 'source_away') ?: data_get($match, 'right') ?: 'Menunggu...';
     $leftIsPlaceholder = preg_match('/(Winner|Loser|Runner[- ]?up|Pemenang|^[A-Z]\d|Bye)/i', (string) $leftRaw);
     $rightIsPlaceholder = preg_match('/(Winner|Loser|Runner[- ]?up|Pemenang|^[A-Z]\d|Bye)/i', (string) $rightRaw);
-    $leftDisplay = isset($assigned->home_team_id) ? $leftRaw : ($leftIsPlaceholder ? 'Menunggu...' : $leftRaw);
-    $rightDisplay = isset($assigned->away_team_id) ? $rightRaw : ($rightIsPlaceholder ? 'Menunggu...' : $rightRaw);
+    // Slot "Bye" (lawan tim yang otomatis lolos) ditampilkan "BYE" (kapital) dan
+    // digayakan berbeda (redup + italic + tracking lebar) agar jelas ini penanda
+    // bye, bukan nama tim — kartu bye memang tak akan pernah diisi lawan.
+    $leftIsBye = strcasecmp((string) $leftRaw, 'Bye') === 0;
+    $rightIsBye = strcasecmp((string) $rightRaw, 'Bye') === 0;
+    $leftDisplay = $leftIsBye ? 'BYE' : (isset($assigned->home_team_id) ? $leftRaw : ($leftIsPlaceholder ? 'Menunggu...' : $leftRaw));
+    $rightDisplay = $rightIsBye ? 'BYE' : (isset($assigned->away_team_id) ? $rightRaw : ($rightIsPlaceholder ? 'Menunggu...' : $rightRaw));
+    $byeTextClass = 'italic tracking-[0.2em] text-slate-500';
 
     $score = $scores[$match['id']] ?? null;
     $played = $score['played'] ?? false;
@@ -39,13 +45,13 @@
                 <div class="flex items-center justify-between gap-2">
                     {{-- truncate: nama panjang tak boleh wrap — kartu yang membengkak
                          membuat titik tengahnya bergeser dan konektor jadi asimetris. --}}
-                    <p class="min-w-0 flex-1 truncate text-sm {{ $homeIsWinner ? 'text-emerald-300 font-semibold' : 'text-slate-200' }}" title="{{ $leftDisplay }}">{{ $leftDisplay }}</p>
+                    <p class="min-w-0 flex-1 truncate text-sm {{ $leftIsBye ? $byeTextClass : ($homeIsWinner ? 'text-emerald-300 font-semibold' : 'text-slate-200') }}" title="{{ $leftDisplay }}">{{ $leftDisplay }}</p>
                     <span class="shrink-0 min-w-[28px] text-center text-base font-bold tabular-nums {{ $homeIsWinner ? 'text-emerald-300' : ($played ? 'text-slate-100' : 'text-slate-500') }}">{{ $homeScoreText }}</span>
                 </div>
             </div>
             <div class="rounded-2xl bg-slate-900 p-3 border {{ $awayIsWinner ? 'border-emerald-500/50' : 'border-slate-700' }}">
                 <div class="flex items-center justify-between gap-2">
-                    <p class="min-w-0 flex-1 truncate text-sm {{ $awayIsWinner ? 'text-emerald-300 font-semibold' : 'text-slate-200' }}" title="{{ $rightDisplay }}">{{ $rightDisplay }}</p>
+                    <p class="min-w-0 flex-1 truncate text-sm {{ $rightIsBye ? $byeTextClass : ($awayIsWinner ? 'text-emerald-300 font-semibold' : 'text-slate-200') }}" title="{{ $rightDisplay }}">{{ $rightDisplay }}</p>
                     <span class="shrink-0 min-w-[28px] text-center text-base font-bold tabular-nums {{ $awayIsWinner ? 'text-emerald-300' : ($played ? 'text-slate-100' : 'text-slate-500') }}">{{ $awayScoreText }}</span>
                 </div>
             </div>

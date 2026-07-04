@@ -3852,25 +3852,31 @@ class TournamentController extends Controller
         $hasGroups = $teams->pluck('group_label')->filter()->isNotEmpty();
         $grouped = [];
 
-        $groupLetters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
         $setting = $tournament->groupSetting;
-        $groupCount = $setting?->group_count ?? 0;
-        
-        for ($i = 1; $i <= $groupCount; $i++) {
-            $groupLabel = $groupLetters[$i - 1] ?? (string) $i;
+        $groupCount = (int) ($setting?->group_count ?? 0);
+
+        // Label grup A..Z lalu AA, AB, ... (konsisten dengan buildGroupLabels &
+        // seeding grup). Array huruf statis A..H dulu memutus di grup ke-9:
+        // grup ke-9 (label 'I') tak punya slot sehingga timnya jatuh ke Grup A
+        // dan muncul "Grup 9" kosong.
+        $groupLabels = $this->buildGroupLabels($groupCount);
+        $firstLabel = $groupLabels[0] ?? 'A';
+
+        foreach ($groupLabels as $groupLabel) {
             $grouped[$groupLabel] = [];
         }
 
         foreach ($teamStats as $teamStat) {
-            if ($hasGroups && !empty($teamStat['group_label'])) {
-                $groupLabel = $teamStat['group_label'];
-            } else {
-                $groupLabel = $groupLetters[0] ?? 'A';
-            }
+            $groupLabel = ($hasGroups && !empty($teamStat['group_label']))
+                ? $teamStat['group_label']
+                : $firstLabel;
+
             if (isset($grouped[$groupLabel])) {
                 $grouped[$groupLabel][] = $teamStat;
             } else {
-                $grouped[$groupLetters[0] ?? 'A'][] = $teamStat;
+                // Label di luar jumlah grup terkonfigurasi — buat slotnya agar
+                // tim tetap tampil di grupnya sendiri (bukan dilempar ke Grup A).
+                $grouped[$groupLabel] = [$teamStat];
             }
         }
 
@@ -3967,20 +3973,6 @@ class TournamentController extends Controller
 
     private function buildGroupLabels(int $groupCount): array
     {
-        $labels = [];
-        $base = range('A', 'Z');
-
-        for ($i = 0; $i < $groupCount; $i++) {
-            if ($i < count($base)) {
-                $labels[] = $base[$i];
-                continue;
-            }
-
-            $first = $base[floor($i / count($base)) - 1] ?? 'A';
-            $second = $base[$i % count($base)];
-            $labels[] = $first . $second;
-        }
-
-        return $labels;
+        return TournamentGroupSetting::groupLabels($groupCount);
     }
 }

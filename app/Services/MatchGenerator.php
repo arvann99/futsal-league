@@ -852,9 +852,11 @@ class MatchGenerator
         $matchId = 1;
         $matchesById = [];
 
-        // Ronde pertama: satu card per pasangan slot. Slot yang berisi
-        // (tim, Bye) tidak menghasilkan card — tim tersebut langsung
-        // dipromosikan sebagai peserta pada card ronde berikutnya.
+        // Ronde pertama: satu card per pasangan slot. Pasangan (tim, Bye) TETAP
+        // menghasilkan card ber-flag is_bye (tim vs "Bye") — tim otomatis lolos
+        // tanpa dijadwalkan sebagai pertandingan. Menampilkan card bye membuat
+        // SETIAP card ronde berikutnya punya dua pengumpan, sehingga bagan
+        // simetris & jarak antar-card seragam (rapi) alih-alih berat sebelah.
         $previousRound = [];
         $currentTeamCount = $slotCount;
         for ($i = 0; $i < $slotCount; $i += 2) {
@@ -862,16 +864,17 @@ class MatchGenerator
             $right = $slots[$i + 1];
 
             // Pasangan dua-bye tidak mungkin (slot terisi seed teratas dulu),
-            // tetapi tetap ditangani agar aman.
+            // tetapi tetap ditangani agar aman: tak ada tim → tak ada card.
             if ($left === 'Bye' && $right === 'Bye') {
                 $previousRound[] = ['advance' => 'Bye'];
                 continue;
             }
 
-            // Tim bye: lewati ronde ini, bawa tim nyata ke ronde berikutnya.
-            if ($left === 'Bye' || $right === 'Bye') {
-                $previousRound[] = ['advance' => $left === 'Bye' ? $right : $left];
-                continue;
+            $isBye = $left === 'Bye' || $right === 'Bye';
+
+            // Normalisasi: pada card bye, tim nyata selalu di kiri, "Bye" di kanan.
+            if ($isBye && $left === 'Bye') {
+                [$left, $right] = [$right, $left];
             }
 
             $match = [
@@ -880,7 +883,7 @@ class MatchGenerator
                 'left' => $left,
                 'right' => $right,
                 'next_match_id' => null,
-                'is_bye' => false,
+                'is_bye' => $isBye,
                 'is_third_place' => false,
             ];
             $matchesById[$match['id']] = $match;
@@ -898,9 +901,16 @@ class MatchGenerator
                 $leftSource = $previousRound[$i];
                 $rightSource = $previousRound[$i + 1] ?? null;
 
-                $resolveLabel = fn ($source) => isset($source['match_id'])
-                    ? 'Pemenang M' . $source['match_id']
-                    : ($source['advance'] ?? 'Bye');
+                // Card bye meneruskan tim-nya langsung (bukan "Pemenang M#"):
+                // pemenang pasti tim itu sendiri karena lawannya "Bye".
+                $resolveLabel = function ($source) use ($matchesById) {
+                    if (isset($source['match_id'])) {
+                        $feeder = $matchesById[$source['match_id']];
+                        return ! empty($feeder['is_bye']) ? $feeder['left'] : 'Pemenang M' . $source['match_id'];
+                    }
+
+                    return $source['advance'] ?? 'Bye';
+                };
 
                 $match = [
                     'id' => $matchId++,
@@ -947,46 +957,16 @@ class MatchGenerator
     }
 
     /**
-     * Hitung posisi vertikal (px) tiap card bracket per kolom berdasarkan graf
-     * feeder→next_match_id: card diletakkan di tengah antara card pengumpannya.
-     * Dengan ini ronde pertama yang "jarang" (tim bye tidak punya card) tetap
-     * tersusun rapi. Mengembalikan [indexKolom][indexMatch] => posisi top.
+     * Hitung posisi vertikal (px) tiap card bracket per kolom (layout satu-arah,
+     * dipakai view non-mirror / fallback). Menjangkar di kolom penuh lalu
+     * menyebar dua arah lewat relasi feeder→next_match_id sehingga kartu
+     * ber-pengumpan-tunggal tetap sejajar pengumpannya (garis konektor lurus)
+     * meski ronde pertama "jarang" karena bye. Mengembalikan
+     * [indexKolom][indexMatch] => posisi top.
      */
     public static function computeBracketCardTops(array $bracketColumns, float $rowUnit): array
     {
-        $topsByColumn = [];
-        $topsById = [];
-
-        foreach ($bracketColumns as $columnIndex => $column) {
-            $cursor = 0;
-
-            foreach (array_values($column['matches'] ?? []) as $matchIndex => $match) {
-                $id = $match['id'] ?? null;
-                $feederTops = [];
-
-                if ($id !== null) {
-                    for ($prev = 0; $prev < $columnIndex; $prev++) {
-                        foreach ($bracketColumns[$prev]['matches'] ?? [] as $prevMatch) {
-                            if (($prevMatch['next_match_id'] ?? null) == $id && isset($topsById[$prevMatch['id']])) {
-                                $feederTops[] = $topsById[$prevMatch['id']];
-                            }
-                        }
-                    }
-                }
-
-                $top = $feederTops !== [] ? (min($feederTops) + max($feederTops)) / 2 : $cursor;
-                $top = max($top, $cursor); // hindari tumpang tindih dalam satu kolom
-
-                if ($id !== null) {
-                    $topsById[$id] = $top;
-                }
-
-                $topsByColumn[$columnIndex][$matchIndex] = $top;
-                $cursor = $top + $rowUnit;
-            }
-        }
-
-        return $topsByColumn;
+        return self::computeSideCardTops(array_values($bracketColumns), $rowUnit);
     }
 
     /**
@@ -1170,6 +1150,102 @@ class MatchGenerator
     }
 
     /**
+     * Posisi vertikal (top px) kartu satu SISI bracket, kolom urut dari ronde
+     * TERLUAR (index 0) ke ronde TERDALAM (mendekati final). Kolom kosong di
+     * depan (ronde play-in yang match-nya semua ke sisi seberang) dibiarkan
+     * kosong demi kesejajaran mirror kiri↔kanan.
+     *
+     * Penjangkaran dua arah dari kolom PENUH (match terbanyak), bukan dari ronde
+     * terluar. Alasan: pada bracket ber-bye ronde terluar bisa hanya berisi
+     * segelintir play-in yang tersebar tak selaras dengan tujuannya, sehingga
+     * menyebar merata dari sana membuat kartu ber-pengumpan-tunggal melenceng
+     * dari pengumpannya (garis konektor miring — bug 21/40/45/... tim). Dengan
+     * menjangkar di kolom penuh lalu:
+     *   - ke DALAM  : tiap kartu di tengah para pengumpan NYATA-nya (relasi
+     *                 next_match_id); pengumpan tunggal → sejajar pengumpan.
+     *   - ke LUAR   : tiap play-in di posisi match TUJUAN-nya (next_match_id);
+     *                 play-in selalu pengumpan tunggal → sejajar tujuannya.
+     * setiap konektor jadi lurus/simetris di semua konfigurasi.
+     */
+    private static function computeSideCardTops(array $columnsOutwardFirst, float $rowUnit): array
+    {
+        $columnCount = count($columnsOutwardFirst);
+        $tops = array_fill(0, $columnCount, []);
+        $topsById = [];
+
+        // Kolom berisi pertama (lewati kolom kosong di depan).
+        $firstCol = 0;
+        while ($firstCol < $columnCount && (($columnsOutwardFirst[$firstCol]['matches'] ?? []) === [])) {
+            $firstCol++;
+        }
+        if ($firstCol >= $columnCount) {
+            return $tops;
+        }
+
+        // Jangkar = kolom berisi dengan match TERBANYAK (ronde penuh terluar).
+        $anchorCol = $firstCol;
+        $maxMatches = -1;
+        for ($c = $firstCol; $c < $columnCount; $c++) {
+            $count = count($columnsOutwardFirst[$c]['matches'] ?? []);
+            if ($count > $maxMatches) {
+                $maxMatches = $count;
+                $anchorCol = $c;
+            }
+        }
+
+        // Sebar jangkar merata berjarak rowUnit.
+        foreach (array_values($columnsOutwardFirst[$anchorCol]['matches']) as $i => $match) {
+            $tops[$anchorCol][$i] = $i * $rowUnit;
+            if (($match['id'] ?? null) !== null) {
+                $topsById[$match['id']] = $tops[$anchorCol][$i];
+            }
+        }
+
+        // Ke DALAM (kolom setelah jangkar): tengah para pengumpan nyata + kursor.
+        for ($c = $anchorCol + 1; $c < $columnCount; $c++) {
+            $cursor = 0;
+            foreach (array_values($columnsOutwardFirst[$c]['matches'] ?? []) as $i => $match) {
+                $id = $match['id'] ?? null;
+                $feederTops = [];
+                if ($id !== null) {
+                    for ($prev = $firstCol; $prev < $c; $prev++) {
+                        foreach ($columnsOutwardFirst[$prev]['matches'] ?? [] as $prevMatch) {
+                            if (($prevMatch['next_match_id'] ?? null) == $id && isset($topsById[$prevMatch['id']])) {
+                                $feederTops[] = $topsById[$prevMatch['id']];
+                            }
+                        }
+                    }
+                }
+
+                $top = $feederTops !== [] ? (min($feederTops) + max($feederTops)) / 2 : $cursor;
+                $top = max($top, $cursor);
+                if ($id !== null) {
+                    $topsById[$id] = $top;
+                }
+                $tops[$c][$i] = $top;
+                $cursor = $top + $rowUnit;
+            }
+        }
+
+        // Ke LUAR (kolom sebelum jangkar): sejajar match tujuannya + kursor.
+        for ($c = $anchorCol - 1; $c >= $firstCol; $c--) {
+            $cursor = 0;
+            foreach (array_values($columnsOutwardFirst[$c]['matches'] ?? []) as $i => $match) {
+                $targetId = $match['next_match_id'] ?? null;
+                $top = ($targetId !== null && isset($topsById[$targetId])) ? $topsById[$targetId] : $cursor;
+                $top = max($top, $cursor);
+                if (($match['id'] ?? null) !== null) {
+                    $topsById[$match['id']] = $top;
+                }
+                $tops[$c][$i] = $top;
+                $cursor = $top + $rowUnit;
+            }
+        }
+
+        return $tops;
+    }
+
+    /**
      * N14 — Hitung posisi vertikal (top px) kartu untuk layout mirror, sehingga
      * bagan benar-benar mengerucut ke PUSAT (tengah horizontal & vertikal) ala
      * Piala Dunia: ronde terluar menyebar penuh atas→bawah, tiap ronde lebih
@@ -1194,66 +1270,7 @@ class MatchGenerator
     {
         // Hitung tops satu sisi. $columnsOutwardFirst: kolom urut dari ronde
         // TERLUAR (paling banyak match) ke ronde TERDALAM (mendekati final).
-        $computeSide = function (array $columnsOutwardFirst) use ($rowUnit): array {
-            $tops = []; // [colIdx => [matchIdx => top]]
-            $topsById = [];
-
-            // Kolom terluar bisa KOSONG bila ronde play-in hanya menyumbang ke
-            // sisi seberang (mis. R16 1 match → semua ke kiri, kolom R16 kanan
-            // kosong tapi tetap ada demi kesejajaran). Lewati kolom-kolom kosong
-            // di depan dan mulai sebar merata dari kolom pertama yang berisi.
-            $seedCol = 0;
-            $columnCount = count($columnsOutwardFirst);
-            while ($seedCol < $columnCount && ($columnsOutwardFirst[$seedCol]['matches'] ?? []) === []) {
-                $tops[$seedCol] = [];
-                $seedCol++;
-            }
-
-            // Ronde terluar berisi: sebar merata berjarak rowUnit.
-            foreach (array_values($columnsOutwardFirst[$seedCol]['matches'] ?? []) as $i => $match) {
-                $tops[$seedCol][$i] = $i * $rowUnit;
-                if (($match['id'] ?? null) !== null) {
-                    $topsById[$match['id']] = $tops[$seedCol][$i];
-                }
-            }
-
-            // Ronde berikutnya: tiap kartu di tengah para pengumpan NYATA-nya
-            // (relasi next_match_id), bukan pasangan posisi (i*2, i*2+1).
-            // Pada bracket ber-bye sebuah match bisa punya SATU pengumpan saja —
-            // pasangan posisi membuatnya melenceng (zigzag); dengan relasi nyata
-            // match berpengumpan tunggal jadi SEJAJAR dengan pengumpannya, dan
-            // match tanpa pengumpan menumpuk rapi lewat kursor.
-            for ($c = $seedCol + 1; $c < $columnCount; $c++) {
-                $cursor = 0;
-
-                foreach (array_values($columnsOutwardFirst[$c]['matches'] ?? []) as $i => $match) {
-                    $id = $match['id'] ?? null;
-                    $feederTops = [];
-
-                    if ($id !== null) {
-                        for ($prev = $seedCol; $prev < $c; $prev++) {
-                            foreach ($columnsOutwardFirst[$prev]['matches'] ?? [] as $prevMatch) {
-                                if (($prevMatch['next_match_id'] ?? null) == $id && isset($topsById[$prevMatch['id']])) {
-                                    $feederTops[] = $topsById[$prevMatch['id']];
-                                }
-                            }
-                        }
-                    }
-
-                    $top = $feederTops !== [] ? (min($feederTops) + max($feederTops)) / 2 : $cursor;
-                    $top = max($top, $cursor); // hindari tumpang tindih dalam satu kolom
-
-                    if ($id !== null) {
-                        $topsById[$id] = $top;
-                    }
-
-                    $tops[$c][$i] = $top;
-                    $cursor = $top + $rowUnit;
-                }
-            }
-
-            return $tops;
-        };
+        $computeSide = fn (array $columnsOutwardFirst): array => self::computeSideCardTops($columnsOutwardFirst, $rowUnit);
 
         // Sisi kiri: index 0 sudah terluar → langsung.
         $leftTops = $computeSide($mirror['left']);

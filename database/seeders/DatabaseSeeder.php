@@ -20,5 +20,6 @@ class DatabaseSeeder extends Seeder
         $this->call(UserSeeder::class);
         $this->call(TournamentWithTeamsSeeder::class);
         $this->call(PialaDuniaTournamentSeeder::class);
+        $this->call(GroupKnockoutSamplesSeeder::class);
     }
 }
