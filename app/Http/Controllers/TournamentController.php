@@ -3858,7 +3858,6 @@ class TournamentController extends Controller
         }
         unset($teamStat);
 
-        $hasGroups = $teams->pluck('group_label')->filter()->isNotEmpty();
         $grouped = [];
 
         $setting = $tournament->groupSetting;
@@ -3869,16 +3868,19 @@ class TournamentController extends Controller
         // grup ke-9 (label 'I') tak punya slot sehingga timnya jatuh ke Grup A
         // dan muncul "Grup 9" kosong.
         $groupLabels = $this->buildGroupLabels($groupCount);
-        $firstLabel = $groupLabels[0] ?? 'A';
 
         foreach ($groupLabels as $groupLabel) {
             $grouped[$groupLabel] = [];
         }
 
         foreach ($teamStats as $teamStat) {
-            $groupLabel = ($hasGroups && !empty($teamStat['group_label']))
-                ? $teamStat['group_label']
-                : $firstLabel;
+            // Tim yang belum diplot (belum punya group_label) TIDAK masuk grup
+            // manapun. Sebelumnya di-fallback ke Grup A sehingga semua tim yang
+            // belum diundi menumpuk di Grup A.
+            $groupLabel = $teamStat['group_label'] ?? null;
+            if (empty($groupLabel)) {
+                continue;
+            }
 
             if (isset($grouped[$groupLabel])) {
                 $grouped[$groupLabel][] = $teamStat;
