@@ -3749,9 +3749,13 @@ class TournamentController extends Controller
         $drawTeams = collect();
         if ((int) ($setting->group_count ?? 0) > 0) {
             $drawGroupLabels = $this->buildGroupLabels((int) $setting->group_count);
+            // Hanya tim terverifikasi (approved) yang boleh masuk plotting/undian —
+            // konsisten dengan performGroupDraw(). Tim pending/rejected tidak
+            // ditampilkan agar tidak ikut terplot & tidak salah hitung kapasitas.
             $drawTeams = $tournament->tournamentTeams()
                 ->with('team')
                 ->get()
+                ->filter(fn ($tt) => ($tt->team?->verification_status ?? 'pending') === 'approved')
                 ->map(fn ($tt) => [
                     'id' => $tt->id,
                     'name' => $tt->team?->name ?? ('Tim ' . $tt->id),
@@ -3769,9 +3773,14 @@ class TournamentController extends Controller
         $pointSettings = $this->resolvePointSettings($tournament);
         $tieBreakers = $pointSettings['tiebreakers'] ?? ['points', 'goal_difference', 'goals_scored', 'head_to_head'];
 
+        // Hanya tim terverifikasi (approved) yang masuk klasemen. Tim
+        // pending/rejected tak boleh muncul di tabel grup (mis. terjatuh ke
+        // Grup A lewat fallback firstLabel saat belum punya group_label).
         $teams = TournamentTeam::with('team')
             ->where('tournament_id', $tournament->id)
-            ->get();
+            ->get()
+            ->filter(fn ($t) => ($t->team?->verification_status ?? 'pending') === 'approved')
+            ->values();
 
         $teamStats = [];
         foreach ($teams as $tournamentTeam) {
