@@ -3317,6 +3317,55 @@ class TournamentController extends Controller
                 $row->save();
             }
         }
+
+        $this->routeLoserToRunnerUpSlots($match, $winner);
+    }
+
+    /**
+     * Tim yang KALAH pada match penentu juga harus diteruskan: struktur bracket
+     * memakai label "Runner-up M{id}" untuk laga perebutan juara 3 (Third
+     * Place). Tanpa perutean ini slot tersebut tidak pernah terisi dan laga
+     * perebutan juara 3 menggantung selamanya (tertangkap validasi
+     * tournament:simulate). Idempoten seperti perutean pemenang: source_*
+     * tetap menyimpan label sehingga koreksi hasil menimpa slot yang sama.
+     */
+    private function routeLoserToRunnerUpSlots(TournamentMatch $match, array $winner): void
+    {
+        if ($match->bracket_match_id === null) {
+            return;
+        }
+
+        $loserIsHome = $winner['team_id'] === $match->away_team_id;
+        $loserTeamId = $loserIsHome ? $match->home_team_id : $match->away_team_id;
+        $loserName = $loserIsHome
+            ? ($match->homeTeam?->team?->name ?? $match->home_team_key)
+            : ($match->awayTeam?->team?->name ?? $match->away_team_key);
+
+        if ($loserTeamId === null || $loserName === null) {
+            return;
+        }
+
+        $label = 'Runner-up M' . $match->bracket_match_id;
+        $rows = TournamentMatch::where('tournament_id', $match->tournament_id)
+            ->where('stage_type', $match->stage_type)
+            ->where(function ($query) use ($label) {
+                $query->where('source_home', $label)->orWhere('source_away', $label);
+            })
+            ->get();
+
+        foreach ($rows as $row) {
+            if ($row->source_home === $label) {
+                $row->home_team_id = $loserTeamId;
+                $row->home_team_key = $loserName;
+            }
+
+            if ($row->source_away === $label) {
+                $row->away_team_id = $loserTeamId;
+                $row->away_team_key = $loserName;
+            }
+
+            $row->save();
+        }
     }
 
     private function isGroupStageComplete(Tournament $tournament): bool
