@@ -349,31 +349,18 @@
                                                 <p class="text-[10px] uppercase tracking-[0.24em] text-slate-400 font-semibold">{{ $thirdPlaceRound['label'] }} ({{ $thirdPlaceRound['teams'] }} Tim)</p>
                                             </div>
 
+                                            {{-- Kartu Third Place memakai partial yang sama dengan kartu
+                                                 bracket lain agar tim ter-assign (loser semifinal via
+                                                 "Runner-up M#"), skor, dan highlight pemenang ikut tampil —
+                                                 markup mentah lama hanya menampilkan placeholder struktur. --}}
                                             @foreach($thirdPlaceRound['matches'] as $matchIndex => $match)
-                                                @php
-                                                    $matchId = $match['id'] ?? "third-place-{$match['index']}";
-                                                @endphp
-                                                <div class="relative rounded-2xl border border-slate-700 bg-slate-950 p-3 shadow-sm min-h-[120px] overflow-hidden bracket-card mb-4" id="bracket-card-{{ $matchId }}" data-match-id="{{ $matchId }}" data-match-round="Third Place">
-                                                    <div class="text-[9px] uppercase tracking-[0.24em] text-slate-500 font-semibold mb-2">Match {{ $matchIndex + 1 }}</div>
-                                                    <div class="space-y-3">
-                                                        <div class="rounded-2xl bg-slate-900 p-3 border border-slate-700">
-                                                            <div class="flex items-center justify-between mb-2 text-[8px] uppercase tracking-[0.24em] text-slate-500 font-semibold">
-                                                                <span>Tim 1</span>
-                                                                <span class="text-slate-400">{{ $match['left'] }}</span>
-                                                            </div>
-                                                            <p class="text-sm text-slate-200">{{ $match['left'] }}</p>
-                                                            <input type="hidden" name="matches[{{ $match['index'] }}][left]" value="{{ $match['left'] }}">
-                                                        </div>
-                                                        <div class="rounded-2xl bg-slate-900 p-3 border border-slate-700">
-                                                            <div class="flex items-center justify-between mb-2 text-[8px] uppercase tracking-[0.24em] text-slate-500 font-semibold">
-                                                                <span>Tim 2</span>
-                                                                <span class="text-slate-400">{{ $match['right'] }}</span>
-                                                            </div>
-                                                            <p class="text-sm text-slate-200">{{ $match['right'] }}</p>
-                                                            <input type="hidden" name="matches[{{ $match['index'] }}][right]" value="{{ $match['right'] }}">
-                                                        </div>
-                                                    </div>
-                                                </div>
+                                                @include('admin.tournaments.bracket.partials.match-card', [
+                                                    'match' => $match,
+                                                    'column' => $thirdPlaceRound,
+                                                    'matchIndex' => $matchIndex,
+                                                    'top' => null,
+                                                    'side' => '',
+                                                ])
                                             @endforeach
                                         </div>
                                     </div>

@@ -5,7 +5,8 @@
     Variabel yang diharapkan:
       $match        array data match (id, index, left, right, next_match_id, ...)
       $column       array kolom (untuk label/round)
-      $top          int   posisi top (px) absolut dalam kolom
+      $top          int|null posisi top (px) absolut dalam kolom; null = ikut
+                    aliran dokumen biasa (dipakai panel Third Place)
       $side         string '' | 'left' | 'right' (N14; '' = satu arah lama)
       $teamsToUse, $assignedMatches, $bracketScores, $qualifiedTeamOptions, $tournamentTeams
 --}}
@@ -43,7 +44,7 @@
     $awayIsWinner = ($score['winner_side'] ?? null) === 'away';
 @endphp
 
-<div class="absolute left-0 right-0" style="top: {{ $top }}px;">
+<div class="{{ ($top ?? null) === null ? 'relative mb-4' : 'absolute left-0 right-0' }}" @if(($top ?? null) !== null) style="top: {{ $top }}px;" @endif>
     <div id="bracket-card-{{ $matchId }}" class="relative z-10 rounded-2xl border border-slate-700 bg-slate-950 p-3 shadow-sm min-h-[120px] overflow-hidden bracket-card" data-match-id="{{ $matchId }}" data-next-match-id="{{ $match['next_match_id'] ?? '' }}" data-match-round="{{ $column['label'] }}" @if($side) data-bracket-side="{{ $side }}" @endif>
         <div class="text-[9px] uppercase tracking-[0.24em] text-slate-500 font-semibold mb-2">Match {{ $matchIndex + 1 }}</div>
         <div class="space-y-3">
