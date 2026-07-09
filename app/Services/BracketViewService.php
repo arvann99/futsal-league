@@ -93,20 +93,38 @@ class BracketViewService
                 $legs[] = ['home' => $deciding->away_score, 'away' => $deciding->home_score];
             }
 
+            // Orientasi kartu bracket = row leg 1 / single (assignedMatches).
+            // tieOutcome dinormalisasi dari perspektif deciding match — pada
+            // tie 2 leg deciding = leg 2 yang home/away-nya TERBALIK dari
+            // kartu, jadi agregat, penalti, dan winner_side harus dibalik
+            // (seperti $legs di atas). Tanpa ini kartu menyorot pemenang yang
+            // salah walau advancement ke ronde berikutnya benar.
+            $flip = $deciding->leg === 2;
+
             $summaries[$bracketId] = [
                 'played' => (bool) $outcome['both_played'],
                 'two_leg' => $isTwoLeg,
                 'home' => [
-                    'score' => $isTwoLeg ? $outcome['agg_home'] : $deciding->home_score,
-                    'pen' => $outcome['pen_home'],
+                    'score' => $isTwoLeg
+                        ? ($flip ? $outcome['agg_away'] : $outcome['agg_home'])
+                        : $deciding->home_score,
+                    'pen' => $flip ? $outcome['pen_away'] : $outcome['pen_home'],
                 ],
                 'away' => [
-                    'score' => $isTwoLeg ? $outcome['agg_away'] : $deciding->away_score,
-                    'pen' => $outcome['pen_away'],
+                    'score' => $isTwoLeg
+                        ? ($flip ? $outcome['agg_home'] : $outcome['agg_away'])
+                        : $deciding->away_score,
+                    'pen' => $flip ? $outcome['pen_home'] : $outcome['pen_away'],
                 ],
                 'legs' => $legs,
                 'pen_decides' => (bool) $outcome['pen_decides'],
-                'winner_side' => $outcome['winner_side'],
+                'winner_side' => $flip
+                    ? match ($outcome['winner_side']) {
+                        'home' => 'away',
+                        'away' => 'home',
+                        default => null,
+                    }
+                    : $outcome['winner_side'],
             ];
         }
 

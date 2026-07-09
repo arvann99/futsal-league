@@ -231,6 +231,51 @@ class MatchGenerator
     }
 
     /**
+     * Regenerasi HANYA row stage playoff (promotion_playoff/relegation_playoff)
+     * dari struktur bracket yang tersimpan di pengaturan — jadwal & hasil liga
+     * reguler tidak disentuh. Padanan regenerateKnockoutMatches() untuk mode
+     * Liga + Play Off; dipakai saat struktur/mode laga bracket berubah pada
+     * turnamen yang liganya sudah/sedang berjalan. Penempatan tim pada slot
+     * direset ke placeholder; pemanggil bertanggung jawab mengisi ulang dari
+     * klasemen liga yang sudah selesai (fillBracketFromFinalStandings).
+     * Pastikan tidak ada match playoff yang sudah punya hasil sebelum
+     * memanggil ini.
+     */
+    public function regeneratePlayoffMatches(Tournament $tournament): void
+    {
+        $bracketValue = $this->getBracketSetting($tournament)->value ?? [];
+        $playoffOptions = $bracketValue['playoff_options'] ?? [];
+
+        $matches = [];
+
+        if (in_array('promotion', $playoffOptions, true)) {
+            $matches = array_merge(
+                $matches,
+                $this->buildPlayoffMatches($tournament, $bracketValue, 'promotion')
+            );
+        }
+
+        if (in_array('relegation', $playoffOptions, true)) {
+            $matches = array_merge(
+                $matches,
+                $this->buildPlayoffMatches($tournament, $bracketValue, 'relegation')
+            );
+        }
+
+        DB::transaction(function () use ($tournament, $matches) {
+            TournamentMatch::where('tournament_id', $tournament->id)
+                ->whereIn('stage_type', ['promotion_playoff', 'relegation_playoff'])
+                ->delete();
+
+            if (! empty($matches)) {
+                TournamentMatch::insert($matches);
+            }
+
+            $this->attachBracketNextMatchIds($tournament);
+        });
+    }
+
+    /**
      * Daftar tim yang lolos verifikasi, diurutkan berdasarkan seed.
      */
     private function approvedTeamDescriptors(Tournament $tournament): array

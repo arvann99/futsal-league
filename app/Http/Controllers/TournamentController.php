@@ -2070,7 +2070,7 @@ class TournamentController extends Controller
 
         $bracketRows = TournamentMatch::where('tournament_id', $tournament->id)
             ->whereIn('stage_type', $bracketStages)
-            ->get(['id', 'leg', 'bracket_match_id', 'round_name', 'is_third_place', 'is_bye']);
+            ->get(['id', 'stage_type', 'leg', 'bracket_match_id', 'round_name', 'is_third_place', 'is_bye']);
 
         // Row yang seharusnya 2 leg pada mode home_away (Final/Third Place/bye
         // tetap single match).
@@ -2095,6 +2095,33 @@ class TournamentController extends Controller
                 ->sort()->values()->all();
             $actualShape = $bracketRows
                 ->map(fn ($row) => ($row->bracket_match_id . '#' . $row->round_name))
+                ->unique()->sort()->values()->all();
+            $bracketShapeChanged = $expectedShape !== $actualShape;
+        } elseif ($competitionType === 'league_playoff') {
+            // Liga + Play Off: bandingkan bentuk per STAGE — saat kedua opsi
+            // aktif, bracket promosi & degradasi punya bracket_match_id yang
+            // bertabrakan sehingga signature harus menyertakan stage_type.
+            // Default id/round mengikuti buildBracketMatchesFromArray agar
+            // struktur custom tanpa id/round tidak selalu dianggap berubah.
+            $expectedByStage = [];
+            if (in_array('promotion', $playoffOptions, true)) {
+                $expectedByStage['promotion_playoff'] = $isBothPlayoff
+                    ? ($valueToSave['matches_promotion'] ?? [])
+                    : $matches;
+            }
+            if (in_array('relegation', $playoffOptions, true)) {
+                $expectedByStage['relegation_playoff'] = $isBothPlayoff
+                    ? ($valueToSave['matches_relegation'] ?? [])
+                    : $matches;
+            }
+
+            $expectedShape = collect($expectedByStage)
+                ->flatMap(fn ($structure, $stage) => collect($structure)->map(
+                    fn ($m) => $stage . '#' . (isset($m['id']) ? (int) $m['id'] : '') . '#' . ($m['round'] ?? 'Bracket')
+                ))
+                ->sort()->values()->all();
+            $actualShape = $bracketRows
+                ->map(fn ($row) => $row->stage_type . '#' . $row->bracket_match_id . '#' . $row->round_name)
                 ->unique()->sort()->values()->all();
             $bracketShapeChanged = $expectedShape !== $actualShape;
         }
@@ -2123,6 +2150,13 @@ class TournamentController extends Controller
                 app(MatchGenerator::class)->regenerateKnockoutMatches($tournament);
                 $this->fillBracketFromFinalStandings($tournament, $this->buildStandingsGroups($tournament));
                 $successMessage = 'Pengaturan Bagan Bracket berhasil disimpan dan bagan gugur digenerate ulang! Jadwal dan hasil fase grup tidak berubah.';
+            } elseif ($competitionType === 'league_playoff') {
+                // Regenerasi row playoff saja; jadwal & hasil liga reguler
+                // utuh. Bila liga sudah selesai, slot langsung diisi ulang
+                // dari klasemen akhir.
+                app(MatchGenerator::class)->regeneratePlayoffMatches($tournament);
+                $this->fillBracketFromFinalStandings($tournament, $this->buildStandingsGroups($tournament));
+                $successMessage = 'Pengaturan Bagan Bracket berhasil disimpan dan bagan playoff digenerate ulang! Jadwal dan hasil liga reguler tidak berubah.';
             }
         }
 
@@ -2843,9 +2877,11 @@ class TournamentController extends Controller
             return back()->withErrors(['live_match' => 'Pertandingan belum siap dimainkan karena peserta belum lengkap.']);
         }
 
-        // N6 — Live Match Logger tidak boleh aktif sebelum jadwal (tanggal/waktu)
-        // pertandingan diisi melalui tombol "Jadwal".
-        if (is_null($match->match_date)) {
+        // N6 — Live Match Logger tidak boleh MEMULAI laga sebelum jadwal
+        // (tanggal/waktu) diisi melalui tombol "Jadwal". Laga yang sudah
+        // berjalan (live/penalti — mis. Leg 2 yang dinaikkan otomatis saat
+        // Leg 1 ditutup) tetap boleh dibuka kembali.
+        if (is_null($match->match_date) && $match->status === 'scheduled') {
             return back()->withErrors(['live_match' => 'Isi jadwal (tanggal & waktu) pertandingan terlebih dahulu melalui tombol "Jadwal" sebelum memulai Live Match.']);
         }
 
@@ -3165,7 +3201,12 @@ class TournamentController extends Controller
         }
 
         if ($legTwo->status === 'scheduled') {
-            $legTwo->update(['status' => 'live_match']);
+            // Leg 2 dimulai sekarang juga — stamp kickoff bila jadwal belum
+            // pernah diisi agar tidak selamanya tampil "Belum dijadwalkan".
+            $legTwo->update([
+                'status' => 'live_match',
+                'match_date' => $legTwo->match_date ?? Carbon::now(),
+            ]);
         }
 
         return $legTwo;
@@ -3392,31 +3433,59 @@ class TournamentController extends Controller
     }
 
     /**
-     * Daftar label grup yang SELURUH pertandingannya sudah full_time. Dipakai
-     * agar bracket terisi progresif per grup (gaya Piala Dunia): begitu sebuah
-     * grup selesai, juara & runner-up grup itu langsung mengisi slot bracket
-     * tanpa menunggu grup lain. Fase reguler bisa berstatus 'group' (multi-grup
-     * dengan label A/B/...) atau 'league' (satu grup, label bisa null → 'A').
+     * Daftar label grup KLASEMEN yang seluruh pertandingannya sudah full_time.
+     * Dipakai agar bracket terisi progresif per grup (gaya Piala Dunia): begitu
+     * sebuah grup selesai, juara & runner-up grup itu langsung mengisi slot
+     * bracket tanpa menunggu grup lain.
+     *
+     * Laga 'group' memakai label grup tim (A/B/...) sehingga selesai per grup.
+     * Laga 'league' (liga playoff) BUKAN per grup: satu round-robin semua tim
+     * dengan group_label 'League'. Liga yang selesai berarti seluruh grup
+     * klasemen selesai sekaligus, jadi dipetakan ke label grup tim agar cocok
+     * dengan keying buildStandingsGroups — label 'League' sendiri tidak pernah
+     * cocok, membuat bracket playoff tak pernah terisi otomatis.
      */
     private function completedGroupLabels(Tournament $tournament): array
     {
         $matches = TournamentMatch::where('tournament_id', $tournament->id)
             ->whereIn('stage_type', ['group', 'league'])
-            ->get(['group_label', 'status']);
+            ->get(['stage_type', 'group_label', 'status']);
 
         if ($matches->isEmpty()) {
             return [];
         }
 
-        // Kelompokkan per label (laga 'league' tanpa label → 'A', menyamai
-        // keying buildStandingsGroups untuk kompetisi satu grup).
-        $byLabel = $matches->groupBy(fn ($m) => $m->group_label ?: 'A');
+        [$leagueMatches, $groupMatches] = $matches->partition(
+            fn ($m) => $m->stage_type === 'league'
+        );
 
-        return $byLabel
-            ->filter(fn ($groupMatches) => $groupMatches->every(fn ($m) => $m->status === 'full_time'))
+        // Liga selesai → semua label grup tim terverifikasi dianggap selesai
+        // (filter approved menyamai buildStandingsGroups).
+        $leagueLabels = [];
+        if ($leagueMatches->isNotEmpty()
+            && $leagueMatches->every(fn ($m) => $m->status === 'full_time')) {
+            $leagueLabels = TournamentTeam::with('team')
+                ->where('tournament_id', $tournament->id)
+                ->whereNotNull('group_label')
+                ->get()
+                ->filter(fn ($tt) => ($tt->team?->verification_status ?? 'pending') === 'approved')
+                ->pluck('group_label')
+                ->unique()
+                ->map(fn ($label) => (string) $label)
+                ->values()
+                ->all();
+        }
+
+        // Laga grup: kelompokkan per label (label kosong → 'A', menyamai
+        // keying buildStandingsGroups untuk kompetisi satu grup).
+        $groupLabels = $groupMatches
+            ->groupBy(fn ($m) => $m->group_label ?: 'A')
+            ->filter(fn ($grpMatches) => $grpMatches->every(fn ($m) => $m->status === 'full_time'))
             ->keys()
             ->map(fn ($label) => (string) $label)
             ->all();
+
+        return array_values(array_unique(array_merge($leagueLabels, $groupLabels)));
     }
 
     private function fillBracketFromFinalStandings(Tournament $tournament, array $groups): void

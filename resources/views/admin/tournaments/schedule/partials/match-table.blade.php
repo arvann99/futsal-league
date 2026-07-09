@@ -122,11 +122,18 @@
                         $editLocked = $matchLocked || $statusKey === 'penalty_shootout';
                         $matchDisabled = $editLocked ? 'disabled' : '';
 
-                        // N6 — jadwal belum diisi bila match_date (datetime) kosong.
-                        // Untuk tie, cek leg yang jadi sumber logger (logger_match_id).
-                        $scheduleMissing = $isTie
-                            ? collect($match['legs'])->contains(fn($l) => empty($l['datetime']))
-                            : empty($match['datetime']);
+                        // N6 — logger butuh jadwal terisi SEBELUM laga dimulai. Cukup
+                        // cek leg yang akan dibuka logger (logger_match_id) — menuntut
+                        // jadwal KEDUA leg membuat deadlock: jadwal Leg 2 terkunci
+                        // sampai Leg 1 selesai, sehingga Leg 1 tak pernah bisa dibuka
+                        // via logger. Leg yang sudah berjalan (live/penalti, mis. Leg 2
+                        // yang dinaikkan otomatis saat Leg 1 ditutup) selalu bisa
+                        // dibuka kembali walau jadwalnya belum diisi.
+                        $loggerEntry = $isTie
+                            ? (collect($match['legs'])->firstWhere('id', $match['logger_match_id'] ?? null) ?? $match['legs'][0])
+                            : $match;
+                        $scheduleMissing = ($loggerEntry['status'] ?? 'scheduled') === 'scheduled'
+                            && empty($loggerEntry['datetime']);
                         // Jadwal masih bisa diatur selama belum Full Time / penalti.
                         $scheduleLocked = ! $matchReady || in_array($statusKey, ['full_time', 'penalty_shootout'], true) || $leg2Locked;
                         // Live Logger butuh: tidak terkunci DAN jadwal sudah terisi.
@@ -246,9 +253,14 @@
                                     default => 'scheduled',
                                 };
                                 $schedEntryLocked = ! $matchReady
-                                    || in_array($entryStatusKey, ['full_time', 'penalty_shootout'], true)
-                                    || ($isTie && $entryIndex === 1 && (($match['legs'][0]['status'] ?? '') !== 'full_time'));
+                                    || in_array($entryStatusKey, ['full_time', 'penalty_shootout'], true);
                                 $schedEntryDisabled = $schedEntryLocked ? 'disabled' : '';
+                                // Tanggal/waktu Leg 2 boleh diatur kapan pun (agar logger
+                                // Leg 1 tidak deadlock); hanya status Live Match yang
+                                // menunggu Leg 1 selesai — guard yang sama ditegakkan
+                                // server-side di updateSchedule.
+                                $legTwoWaitsLegOne = $isTie && $entryIndex === 1
+                                    && (($match['legs'][0]['status'] ?? '') !== 'full_time');
                             @endphp
                             <form method="POST" action="{{ route('tournaments.matches.schedule', ['tournament' => $tournament, 'match' => $entry['id']]) }}" class="grid gap-4 lg:grid-cols-3 {{ $entryIndex > 0 ? 'border-t border-slate-800 pt-4' : '' }}">
                                 @csrf
@@ -257,6 +269,9 @@
                                     <div class="lg:col-span-3 flex items-center gap-2">
                                         <span class="inline-flex rounded-full bg-sky-500/10 px-3 py-1 text-[11px] font-semibold text-sky-200">Leg {{ $entryIndex + 1 }}</span>
                                         <span class="text-sm text-slate-300">{{ $entry['left'] ?? 'TBD' }} vs {{ $entry['right'] ?? 'TBD' }}</span>
+                                        @if($legTwoWaitsLegOne)
+                                            <span class="text-xs text-slate-500">— status Live menunggu Leg 1 selesai</span>
+                                        @endif
                                     </div>
                                 @endif
                                 <div>
@@ -271,7 +286,7 @@
                                     <label class="block text-xs font-semibold text-slate-400 mb-2" for="match_status_{{ $entry['id'] }}">Status Laga</label>
                                     <select id="match_status_{{ $entry['id'] }}" name="match_status" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" required {{ $schedEntryDisabled }}>
                                         <option value="scheduled" {{ $entryStatusKey === 'scheduled' ? 'selected' : '' }}>Scheduled</option>
-                                        <option value="live_match" {{ $entryStatusKey === 'live_match' ? 'selected' : '' }}>Live Match</option>
+                                        <option value="live_match" {{ $entryStatusKey === 'live_match' ? 'selected' : '' }} {{ $legTwoWaitsLegOne ? 'disabled' : '' }}>Live Match</option>
                                     </select>
                                 </div>
                                 <div class="lg:col-span-3 flex flex-col gap-3">
